@@ -2,13 +2,15 @@
 #include <SDL3/SDL.h>
 #include <stdio.h>
 
-typedef struct color {
+const int MAX_ENTITY_COUNT = 1000;
+
+typedef struct c_color {
 	int red;
 	int green;
 	int blue;
-} color;
+} c_color;
 
-void spawn_house(SDL_FRect *p_house_rect, color *p_house_color, SDL_Rect *p_display_bounds) {
+void spawn_house(SDL_FRect *p_house_rect, c_color *p_house_color, SDL_Rect *p_display_bounds) {
 	const uint32_t HOUSE_WIDTH = 300;
 	const uint32_t HOUSE_HEIGHT = 300;
 	*p_house_rect = (SDL_FRect) {
@@ -17,10 +19,10 @@ void spawn_house(SDL_FRect *p_house_rect, color *p_house_color, SDL_Rect *p_disp
 		.x = (p_display_bounds->w / 2) - (HOUSE_WIDTH / 2),
 		.y = (p_display_bounds->h / 2) - (HOUSE_HEIGHT / 2),
 	};
-	*p_house_color = (color) {
+	*p_house_color = (c_color) {
 		.red = 100,
-		.green = 100,
-		.blue = 100
+		.green = 255,
+		.blue = 255
 	};
 }
 
@@ -28,7 +30,7 @@ void printfFRect(SDL_FRect *p_sdl_f_rect) {
 	printf("RECT: { x: %f, y: %f, w: %f, h: %f }\n", p_sdl_f_rect->x, p_sdl_f_rect->y, p_sdl_f_rect->w, p_sdl_f_rect->h);
 }
 
-void init(SDL_Rect *p_display_bounds, int entities[], int *p_entityCount, SDL_FRect rects[], int rectCount, color colors[], int colorCount) {
+void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, SDL_FRect rects[], c_color colors[]) {
 	for(int i = 0; i < *p_entityCount; i++) {
 		rects[i] = (SDL_FRect) {
 			.x = rand() / (RAND_MAX / p_display_bounds->w + 1),
@@ -36,7 +38,7 @@ void init(SDL_Rect *p_display_bounds, int entities[], int *p_entityCount, SDL_FR
 			.w = rand() / (RAND_MAX / p_display_bounds->w + 1),
 			.h = rand() / (RAND_MAX / p_display_bounds->h + 1)
 		};
-		colors[i] = (color) {
+		colors[i] = (c_color) {
 			.red = rand() / (RAND_MAX / 255 + 1),
 			.green = rand() / (RAND_MAX / 255 + 1),
 			.blue = rand() / (RAND_MAX / 255 + 1),
@@ -45,7 +47,7 @@ void init(SDL_Rect *p_display_bounds, int entities[], int *p_entityCount, SDL_FR
 	spawn_house(&rects[*p_entityCount], &colors[*p_entityCount], p_display_bounds);
 	SDL_FRect *house = &rects[*p_entityCount];
 	printfFRect(house);
-	*p_entityCount += 1;
+	(*p_entityCount)++;
 }
 
 void cleanup(SDL_Window *p_sdl_window) {
@@ -56,12 +58,9 @@ void cleanup(SDL_Window *p_sdl_window) {
 int main() {
 	SDL_Window *p_sdl_window;
 	SDL_Renderer *p_sdl_renderer;
-	int entityCount = 0;
-	int entities[1000] = {0};
-	int rectCount = 1000;
-	SDL_FRect rects[1000] = {};
-	int colorCount = 1000;
-	color colors[1000] = {0};
+	size_t entityCount = 0;
+	SDL_FRect rects[MAX_ENTITY_COUNT] = {};
+	c_color colors[MAX_ENTITY_COUNT] = {0};
 
 	SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_EVENTS);
 	SDL_Rect displayBounds;
@@ -74,8 +73,8 @@ int main() {
 	printf("Detected the following display bounds: { w: %d, h: %d } for displayId: %d\n", displayBounds.w, displayBounds.h, primaryDisplayId);
 
 	SDL_CreateWindowAndRenderer("Worlds Below", displayBounds.w, displayBounds.h, SDL_WINDOW_FULLSCREEN, &p_sdl_window, &p_sdl_renderer);
-	init(&displayBounds, entities, &entityCount, rects, rectCount, colors, colorCount);
-	printf("ENTITY COUNT: %d\n", entityCount);
+	init(&displayBounds, &entityCount, rects, colors);
+	printf("ENTITY COUNT: %zu\n", entityCount);
 
 	bool running = true;
 	while(running) {
@@ -97,7 +96,7 @@ int main() {
 					printf("detected an unhandled event.\n");
 					break;
 			}
-			SDL_SetRenderDrawColor(p_sdl_renderer, 0, 0, 100, 0x00);
+			SDL_SetRenderDrawColor(p_sdl_renderer, 0, 0, 0, 0x00);
 			SDL_RenderClear(p_sdl_renderer);
 			
 			for(int i = 0; i < entityCount; i++) {
