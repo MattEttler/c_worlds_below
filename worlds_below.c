@@ -18,9 +18,9 @@ void spawn_house(SDL_FRect *p_house_rect, color *p_house_color, SDL_Rect *p_disp
 		.y = (p_display_bounds->h / 2) - (HOUSE_HEIGHT / 2),
 	};
 	*p_house_color = (color) {
-		.red = rand() / (RAND_MAX / 255 + 1),
-		.green = rand() / (RAND_MAX / 255 + 1),
-		.blue = rand() / (RAND_MAX / 255 + 1),
+		.red = 100,
+		.green = 100,
+		.blue = 100
 	};
 }
 
@@ -97,13 +97,12 @@ int main() {
 					printf("detected an unhandled event.\n");
 					break;
 			}
-			SDL_SetRenderDrawColor(p_sdl_renderer, 0, 0, 0, 0x00);
+			SDL_SetRenderDrawColor(p_sdl_renderer, 0, 0, 100, 0x00);
 			SDL_RenderClear(p_sdl_renderer);
 			
 			for(int i = 0; i < entityCount; i++) {
-				printfFRect(&rects[i]);
-				SDL_SetRenderDrawColor(p_sdl_renderer, colors[i].red, colors[i].green, colors[i].blue, 0x00);
-				SDL_RenderRect(p_sdl_renderer, &rects[i]);
+				SDL_SetRenderDrawColor(p_sdl_renderer, colors[i].red, colors[i].green, colors[i].blue, SDL_ALPHA_OPAQUE);
+				SDL_RenderFillRect(p_sdl_renderer, &rects[i]);
 			}
 
 			SDL_RenderPresent(p_sdl_renderer);
