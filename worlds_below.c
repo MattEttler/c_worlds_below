@@ -4,6 +4,7 @@
 #include <time.h>
 
 const int MAX_ENTITY_COUNT = 1000;
+const int MAX_HEALTH = 100;
 
 void printfFRect(SDL_FRect *p_sdl_f_rect) {
 	printf("{ x: %f, y: %f, w: %f, h: %f }\n", p_sdl_f_rect->x, p_sdl_f_rect->y, p_sdl_f_rect->w, p_sdl_f_rect->h);
@@ -15,7 +16,14 @@ typedef struct c_color {
 	int blue;
 } c_color;
 
-void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, SDL_FRect rects[], c_color colors[], SDL_FRect *p_rect_spawn_bounds) {
+typedef uint32_t c_health;
+typedef bool c_character;
+typedef struct c_pos {
+	int x;
+	int y;
+} c_pos;
+
+void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, SDL_FRect rects[], c_color colors[], c_health healths[], SDL_FRect *p_rect_spawn_bounds) {
 	uint32_t character_width = 50;
 	uint32_t character_height = 50;
 	for(int i = 0; i < spawnCount; i++) {
@@ -31,15 +39,16 @@ void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, SDL_FRect rect
 			.green = 255,
 			.blue = 0,
 		};
+		healths[entity] = MAX_HEALTH / 2;
 		printf("<CHARACTER_SPAWNED> %zu", *p_entityCount);
 		(*p_entityCount)++;
 		printfFRect(&rects[entity]);
 	}
 }
 
-void spawn_player(size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], c_color colors[], SDL_FRect *p_rect_spawn_bounds) {
+void spawn_player(size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], c_color colors[], c_health healths[], SDL_FRect *p_rect_spawn_bounds) {
 	player_controlled[*p_entityCount] = true;
-	spawn_characters(1, p_entityCount, rects, colors, p_rect_spawn_bounds);
+	spawn_characters(1, p_entityCount, rects, colors, healths, p_rect_spawn_bounds);
 	printf("<PLAYER SPAWNED>%s\n", player_controlled[*p_entityCount] ? "true" : "false");
 }
 
@@ -64,12 +73,12 @@ void spawn_house(size_t *p_entityCount, SDL_FRect rects[], c_color colors[], SDL
 	printfFRect(p_house_rect);
 }
 
-void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, SDL_FRect rects[], c_color colors[], bool player_controlled[]) {
+void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, SDL_FRect rects[], c_color colors[], c_health healths[], bool player_controlled[]) {
 	spawn_house(p_entityCount, rects, colors, p_display_bounds);
 	SDL_FRect character_spawn_bounds;
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
-	spawn_characters(10, p_entityCount, rects, colors, &character_spawn_bounds);
-	spawn_player(p_entityCount, player_controlled, rects, colors, &character_spawn_bounds);
+	spawn_characters(10, p_entityCount, rects, colors, healths, &character_spawn_bounds);
+	spawn_player(p_entityCount, player_controlled, rects, colors, healths, &character_spawn_bounds);
 }
 
 void move_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], bool left, bool right, bool up, bool down) {
@@ -97,6 +106,40 @@ void move_player(long *p_time_since_last_tick, size_t *p_entityCount, bool playe
 	}
 }
 
+void render_characters(size_t *p_entityCount, c_health healths[], SDL_FRect rects[], SDL_Renderer *p_sdl_renderer) {
+	SDL_FRect health_background = {
+		.x = 0,
+		.y = 0,
+		.w = 80,
+		.h = 10
+	};
+	SDL_FRect health_foreground = {
+		.x = 0,
+		.y = 0,
+		.w = 80,
+		.h = 20
+	};
+
+	for(size_t i = 0; i < *p_entityCount; i++) {
+		if(&healths[i] != NULL && &rects[i] != NULL) {
+			float health_x = rects[i].x - (health_background.w / 2) + (rects[i].w / 2);
+			float health_y = rects[i].y - 30;
+
+			health_background.x = health_x;
+			health_background.y = health_y;
+			health_foreground.x = health_x;
+			health_foreground.y = health_y - (health_background.h / 2);
+			health_foreground.w = ((float)healths[i] / MAX_HEALTH ) * health_background.w;
+			// Render Red Bar Background
+			SDL_SetRenderDrawColor(p_sdl_renderer, 255, 0, 0, SDL_ALPHA_OPAQUE);
+			SDL_RenderFillRect(p_sdl_renderer, &health_background);
+			// Render Green Bar Background
+			SDL_SetRenderDrawColor(p_sdl_renderer, 0, 255, 0, 100);
+			SDL_RenderFillRect(p_sdl_renderer, &health_foreground);
+		}
+	}
+}
+
 void cleanup(SDL_Window *p_sdl_window) {
 	SDL_DestroyWindow(p_sdl_window);
 	SDL_Quit();
@@ -105,10 +148,14 @@ void cleanup(SDL_Window *p_sdl_window) {
 int main() {
 	SDL_Window *p_sdl_window;
 	SDL_Renderer *p_sdl_renderer;
+
 	size_t entityCount = 0;
+	
+	// components
 	SDL_FRect rects[MAX_ENTITY_COUNT] = {};
 	c_color colors[MAX_ENTITY_COUNT] = {};
 	bool player_controlled[MAX_ENTITY_COUNT] = {false};
+	c_health healths[MAX_ENTITY_COUNT] = {};
 
 	SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_EVENTS);
 	SDL_Rect displayBounds;
@@ -121,7 +168,7 @@ int main() {
 	printf("Detected the following display bounds: { w: %d, h: %d } for displayId: %d\n", displayBounds.w, displayBounds.h, primaryDisplayId);
 
 	SDL_CreateWindowAndRenderer("Worlds Below", displayBounds.w, displayBounds.h, SDL_WINDOW_FULLSCREEN, &p_sdl_window, &p_sdl_renderer);
-	init(&displayBounds, &entityCount, rects, colors, player_controlled);
+	init(&displayBounds, &entityCount, rects, colors, healths, player_controlled);
 	printf("ENTITY COUNT: %zu\n", entityCount);
 
 	bool player_left = false;
@@ -220,8 +267,8 @@ int main() {
 		char* str = malloc(length + 1);
 		snprintf(str, length + 1, "FPS: %u", fps);
 
+		render_characters(&entityCount, healths, rects, p_sdl_renderer);
 		SDL_RenderDebugText(p_sdl_renderer, 10, 10, str);
-
 		SDL_RenderPresent(p_sdl_renderer);
 		move_player(&time_since_last_tick, &entityCount, player_controlled, rects, player_left, player_right, player_up, player_down);
 
