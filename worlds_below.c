@@ -1,8 +1,13 @@
-#include <SDL3/SDL_init.h>
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_init.h>
 #include <stdio.h>
+#include <time.h>
 
 const int MAX_ENTITY_COUNT = 1000;
+
+void printfFRect(SDL_FRect *p_sdl_f_rect) {
+	printf("{ x: %f, y: %f, w: %f, h: %f }\n", p_sdl_f_rect->x, p_sdl_f_rect->y, p_sdl_f_rect->w, p_sdl_f_rect->h);
+}
 
 typedef struct c_color {
 	int red;
@@ -10,44 +15,86 @@ typedef struct c_color {
 	int blue;
 } c_color;
 
-void spawn_house(SDL_FRect *p_house_rect, c_color *p_house_color, SDL_Rect *p_display_bounds) {
+void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, SDL_FRect rects[], c_color colors[], SDL_FRect *p_rect_spawn_bounds) {
+	uint32_t character_width = 50;
+	uint32_t character_height = 50;
+	for(int i = 0; i < spawnCount; i++) {
+		size_t entity = (*p_entityCount) + i;
+		rects[entity] = (SDL_FRect) {
+			.x = rand() / (RAND_MAX / (p_rect_spawn_bounds->w - character_width + 1)) + p_rect_spawn_bounds->x,
+			.y = rand() / (RAND_MAX / (p_rect_spawn_bounds->h - character_height + 1)) + p_rect_spawn_bounds->y,
+			.w = character_width,
+			.h = character_height,
+		};
+		colors[entity] = (c_color) {
+			.red = 255,
+			.green = 255,
+			.blue = 0,
+		};
+		printf("<CHARACTER_SPAWNED> %zu", *p_entityCount);
+		(*p_entityCount)++;
+		printfFRect(&rects[entity]);
+	}
+}
+
+void spawn_player(size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], c_color colors[], SDL_FRect *p_rect_spawn_bounds) {
+	player_controlled[*p_entityCount] = true;
+	spawn_characters(1, p_entityCount, rects, colors, p_rect_spawn_bounds);
+	printf("<PLAYER SPAWNED>%s\n", player_controlled[*p_entityCount] ? "true" : "false");
+}
+
+void spawn_house(size_t *p_entityCount, SDL_FRect rects[], c_color colors[], SDL_Rect *p_display_bounds) {
 	const uint32_t HOUSE_WIDTH = 300;
 	const uint32_t HOUSE_HEIGHT = 300;
+	SDL_FRect *p_house_rect = &rects[*p_entityCount];
 	*p_house_rect = (SDL_FRect) {
 		.w = HOUSE_WIDTH,
 		.h = HOUSE_HEIGHT,
 		.x = (p_display_bounds->w / 2) - (HOUSE_WIDTH / 2),
 		.y = (p_display_bounds->h / 2) - (HOUSE_HEIGHT / 2),
 	};
+	c_color *p_house_color = &colors[*p_entityCount];
 	*p_house_color = (c_color) {
 		.red = 100,
-		.green = 255,
-		.blue = 255
+		.green = 100,
+		.blue = 100
 	};
-}
-
-void printfFRect(SDL_FRect *p_sdl_f_rect) {
-	printf("RECT: { x: %f, y: %f, w: %f, h: %f }\n", p_sdl_f_rect->x, p_sdl_f_rect->y, p_sdl_f_rect->w, p_sdl_f_rect->h);
-}
-
-void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, SDL_FRect rects[], c_color colors[]) {
-	for(int i = 0; i < *p_entityCount; i++) {
-		rects[i] = (SDL_FRect) {
-			.x = rand() / (RAND_MAX / p_display_bounds->w + 1),
-			.y = rand() / (RAND_MAX / p_display_bounds->h + 1),
-			.w = rand() / (RAND_MAX / p_display_bounds->w + 1),
-			.h = rand() / (RAND_MAX / p_display_bounds->h + 1)
-		};
-		colors[i] = (c_color) {
-			.red = rand() / (RAND_MAX / 255 + 1),
-			.green = rand() / (RAND_MAX / 255 + 1),
-			.blue = rand() / (RAND_MAX / 255 + 1),
-		};
-	}
-	spawn_house(&rects[*p_entityCount], &colors[*p_entityCount], p_display_bounds);
-	SDL_FRect *house = &rects[*p_entityCount];
-	printfFRect(house);
 	(*p_entityCount)++;
+	printf("<HOUSE_SPAWNED>");
+	printfFRect(p_house_rect);
+}
+
+void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, SDL_FRect rects[], c_color colors[], bool player_controlled[]) {
+	spawn_house(p_entityCount, rects, colors, p_display_bounds);
+	SDL_FRect character_spawn_bounds;
+	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
+	spawn_characters(10, p_entityCount, rects, colors, &character_spawn_bounds);
+	spawn_player(p_entityCount, player_controlled, rects, colors, &character_spawn_bounds);
+}
+
+void move_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], bool left, bool right, bool up, bool down) {
+	float pixels_per_foot = 50.0f;
+	float fps = 10.0f;
+	float fpns = fps / 1000000000;
+	float delta = ((*p_time_since_last_tick) * fpns) * pixels_per_foot;
+
+	for(size_t i = 0; i < *p_entityCount; i++) {
+		if(player_controlled[i] == true) {
+			SDL_FRect *p_player_rect = &rects[i];
+			if(left) {
+				p_player_rect->x -= delta;
+			}
+			if(right) {
+				p_player_rect->x += delta;
+			}
+			if(up) {
+				p_player_rect->y -= delta;
+			}
+			if(down) {
+				p_player_rect->y += delta;
+			}
+		}
+	}
 }
 
 void cleanup(SDL_Window *p_sdl_window) {
@@ -60,7 +107,8 @@ int main() {
 	SDL_Renderer *p_sdl_renderer;
 	size_t entityCount = 0;
 	SDL_FRect rects[MAX_ENTITY_COUNT] = {};
-	c_color colors[MAX_ENTITY_COUNT] = {0};
+	c_color colors[MAX_ENTITY_COUNT] = {};
+	bool player_controlled[MAX_ENTITY_COUNT] = {false};
 
 	SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_EVENTS);
 	SDL_Rect displayBounds;
@@ -73,19 +121,73 @@ int main() {
 	printf("Detected the following display bounds: { w: %d, h: %d } for displayId: %d\n", displayBounds.w, displayBounds.h, primaryDisplayId);
 
 	SDL_CreateWindowAndRenderer("Worlds Below", displayBounds.w, displayBounds.h, SDL_WINDOW_FULLSCREEN, &p_sdl_window, &p_sdl_renderer);
-	init(&displayBounds, &entityCount, rects, colors);
+	init(&displayBounds, &entityCount, rects, colors, player_controlled);
 	printf("ENTITY COUNT: %zu\n", entityCount);
+
+	bool player_left = false;
+	bool player_right = false;
+	bool player_up = false;
+	bool player_down = false;
+
+	struct timespec start, end;
+	long time_since_last_tick = 0;
+	long time_since_last_fps_calc = 0;
+	uint32_t fps = 0;
+	uint32_t frame_count = 0;
+	timespec_get(&start, TIME_UTC);
 
 	bool running = true;
 	while(running) {
+		timespec_get(&end, TIME_UTC);
+		time_since_last_tick = ((end.tv_sec - start.tv_sec) * 1000000000 ) + (end.tv_nsec - start.tv_nsec);
+		timespec_get(&start, TIME_UTC);
+		printf("NS SINCE LAST TICK: %ld\n", time_since_last_tick);
+
 		SDL_Event event;
 		while(SDL_PollEvent(&event)) {
 			switch(event.type) {
 				case SDL_EVENT_KEY_DOWN: 
 					// TODO: add proper logging with levels like trace/debug
-					printf("detected a keyboard event.\n");
-					if(event.key.key == SDLK_ESCAPE) {
-						running = false;
+					// printf("detected a keyboard event. %d\n", event.key.key);
+					switch(event.key.key) {
+						case SDLK_ESCAPE:
+							if(event.key.key == SDLK_ESCAPE) {
+								running = false;
+							}
+							break;
+						case SDLK_LEFT:
+							printf("LEFT\n");
+							player_left = true;
+							break;
+						case SDLK_RIGHT:
+							printf("RIGHT\n");
+							player_right = true;
+							break;
+						case SDLK_UP:
+							printf("UP\n");
+							player_up = true;
+							break;
+						case SDLK_DOWN:
+							printf("DOWN\n");
+							player_down = true;
+							break;
+					}
+					break;
+				case SDL_EVENT_KEY_UP: 
+					// TODO: add proper logging with levels like trace/debug
+					switch(event.key.key) {
+						case SDLK_LEFT:
+							player_left = false;
+							break;
+						case SDLK_RIGHT:
+							player_right = false;
+							break;
+						case SDLK_UP:
+							player_up = false;
+							break;
+						case SDLK_DOWN:
+							player_down = false;
+							break;
 					}
 					break;
 				case SDL_EVENT_QUIT:
@@ -93,19 +195,36 @@ int main() {
 					running = false;
 					break;
 				default: 
-					printf("detected an unhandled event.\n");
+					//printf("detected an unhandled event.\n");
 					break;
 			}
-			SDL_SetRenderDrawColor(p_sdl_renderer, 0, 0, 0, 0x00);
-			SDL_RenderClear(p_sdl_renderer);
-			
-			for(int i = 0; i < entityCount; i++) {
-				SDL_SetRenderDrawColor(p_sdl_renderer, colors[i].red, colors[i].green, colors[i].blue, SDL_ALPHA_OPAQUE);
-				SDL_RenderFillRect(p_sdl_renderer, &rects[i]);
-			}
-
-			SDL_RenderPresent(p_sdl_renderer);
 		}
+		
+		SDL_SetRenderDrawColor(p_sdl_renderer, 0, 0, 0, 0x00);
+		SDL_RenderClear(p_sdl_renderer);
+		for(int i = 0; i < entityCount; i++) {
+			SDL_SetRenderDrawColor(p_sdl_renderer, colors[i].red, colors[i].green, colors[i].blue, SDL_ALPHA_OPAQUE);
+			SDL_RenderFillRect(p_sdl_renderer, &rects[i]);
+		}
+
+
+		time_since_last_fps_calc += time_since_last_tick;
+		frame_count += 1;
+		if(time_since_last_fps_calc > 1000000000) {
+			fps = frame_count;
+			frame_count = 0;
+			time_since_last_fps_calc = 0;
+		}
+
+		int length = snprintf(NULL, 0, "FPS: %u", fps);
+		char* str = malloc(length + 1);
+		snprintf(str, length + 1, "FPS: %u", fps);
+
+		SDL_RenderDebugText(p_sdl_renderer, 10, 10, str);
+
+		SDL_RenderPresent(p_sdl_renderer);
+		move_player(&time_since_last_tick, &entityCount, player_controlled, rects, player_left, player_right, player_up, player_down);
+
 	}
 	cleanup(p_sdl_window);
 	return 0;
