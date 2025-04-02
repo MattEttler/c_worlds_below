@@ -312,7 +312,7 @@ int main() {
 			}
 		}
 		
-		SDL_SetRenderDrawColor(p_sdl_renderer, 0, 0, 0, 0x00);
+		SDL_SetRenderDrawColor(p_sdl_renderer, 0, 0, 20, 0x00);
 		SDL_RenderClear(p_sdl_renderer);
 		for(int i = 0; i < entityCount; i++) {
 			SDL_SetRenderDrawColor(p_sdl_renderer, colors[i].red, colors[i].green, colors[i].blue, SDL_ALPHA_OPAQUE);
