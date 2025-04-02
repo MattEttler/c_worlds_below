@@ -10,18 +10,80 @@ void printfFRect(SDL_FRect *p_sdl_f_rect) {
 	printf("{ x: %f, y: %f, w: %f, h: %f }\n", p_sdl_f_rect->x, p_sdl_f_rect->y, p_sdl_f_rect->w, p_sdl_f_rect->h);
 }
 
+
+// =======================================================================================
+//  ┌─┐┌─┐┌┬┐┌─┐┌─┐┌┐┌┌─┐┌┐┌┌┬┐┌─┐
+//  │  │ ││││├─┘│ ││││├┤ │││ │ └─┐
+//  └─┘└─┘┴ ┴┴  └─┘┘└┘└─┘┘└┘ ┴ └─┘
+// generally components should use the following conventions:
+// - use typedef- this makes it easier to refactor the underlying data of the component
+// - primitive data types when possible
+// - prefix with `c_` to indicate it is a component
+
+typedef bool c_character;
 typedef struct c_color {
 	int red;
 	int green;
 	int blue;
 } c_color;
+typedef bool c_oxygenator;
+typedef float c_health;
+// TODO: this should be refactored to not directly depend on the SDL_FRect... especially since we will eventually be drawing polygons.
+typedef SDL_FRect c_boundingBox;
 
-typedef uint32_t c_health;
-typedef bool c_character;
-typedef struct c_pos {
-	int x;
-	int y;
-} c_pos;
+
+// =======================================================================================
+//  ┌─┐┬ ┬┌─┐┌┬┐┌─┐┌┬┐┌─┐
+//  └─┐└┬┘└─┐ │ ├┤ │││└─┐
+//  └─┘ ┴ └─┘ ┴ └─┘┴ ┴└─┘
+//  generally game systems use the following convention: 
+//  `sys_<component_a>_<component_b>_...(entityCount, component_a[], component_b[])`
+//  where the system is named based on the data components required to operate the system,
+//  ideally in the same order as the parameters.
+//
+
+bool overlaps(c_boundingBox *pBoundingBoxA, c_boundingBox *pBoundingBoxB) {
+	bool result = (
+			(pBoundingBoxA->x+pBoundingBoxA->w < pBoundingBoxB->x) ||
+			(pBoundingBoxB->x+pBoundingBoxB->w < pBoundingBoxA->x) ||
+			(pBoundingBoxA->y+pBoundingBoxA->h < pBoundingBoxB->y) ||
+			(pBoundingBoxB->y+pBoundingBoxB->h < pBoundingBoxA->y)
+		);
+	return !result;
+}
+
+void sys_health_oxygenator_boundingBox(long *p_time_since_last_tick, size_t *pEntityCount, c_health healths[], c_oxygenator oxygenators[], c_boundingBox boundingBoxes[]) {
+	const float O2_RECOVERY_RATE_PER_SECOND = 5;
+	const float O2_RECOVERY_RATE_PER_NANOSECOND = O2_RECOVERY_RATE_PER_SECOND / 1000000000;
+	float delta = (*p_time_since_last_tick) * O2_RECOVERY_RATE_PER_NANOSECOND;
+	for(size_t i = 0; i < *pEntityCount; i++) {
+		c_health *pHealth = &healths[i];
+		c_boundingBox *pBoundingBoxA = &boundingBoxes[i];
+		bool boundingBoxWithHealth = (pHealth != NULL && pBoundingBoxA != NULL);
+		if(boundingBoxWithHealth) {
+			bool oxygenatorAndHealthOverlap = false;
+			for(size_t j = 0; j < *pEntityCount; j++) {
+				if(i == j) {
+					continue;
+				}
+				c_oxygenator *pOxygenator = &oxygenators[j];
+				c_boundingBox *pBoundingBoxB = &boundingBoxes[j];
+				bool oxygenatorWithBoundingBox = (pOxygenator != NULL && *pOxygenator && pBoundingBoxB != NULL);
+				if(oxygenatorWithBoundingBox) {
+					oxygenatorAndHealthOverlap = overlaps(pBoundingBoxA, pBoundingBoxB);
+					if(oxygenatorAndHealthOverlap) {
+						break;
+					}
+				}
+			}
+			if(oxygenatorAndHealthOverlap) {
+				*pHealth = min(MAX_HEALTH, *pHealth+delta);
+			} else {
+				*pHealth = max(0, *pHealth-delta);
+			}
+		}
+	}
+}
 
 void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, SDL_FRect rects[], c_color colors[], c_health healths[], SDL_FRect *p_rect_spawn_bounds) {
 	uint32_t character_width = 50;
@@ -39,7 +101,7 @@ void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, SDL_FRect rect
 			.green = 255,
 			.blue = 0,
 		};
-		healths[entity] = MAX_HEALTH / 2;
+		healths[entity] = MAX_HEALTH;
 		printf("<CHARACTER_SPAWNED> %zu", *p_entityCount);
 		(*p_entityCount)++;
 		printfFRect(&rects[entity]);
@@ -52,9 +114,10 @@ void spawn_player(size_t *p_entityCount, bool player_controlled[], SDL_FRect rec
 	printf("<PLAYER SPAWNED>%s\n", player_controlled[*p_entityCount] ? "true" : "false");
 }
 
-void spawn_house(size_t *p_entityCount, SDL_FRect rects[], c_color colors[], SDL_Rect *p_display_bounds) {
+void spawn_house(size_t *p_entityCount, c_oxygenator oxygenators[], SDL_FRect rects[], c_color colors[], SDL_Rect *p_display_bounds) {
 	const uint32_t HOUSE_WIDTH = 300;
 	const uint32_t HOUSE_HEIGHT = 300;
+	oxygenators[*p_entityCount] = true;
 	SDL_FRect *p_house_rect = &rects[*p_entityCount];
 	*p_house_rect = (SDL_FRect) {
 		.w = HOUSE_WIDTH,
@@ -68,20 +131,20 @@ void spawn_house(size_t *p_entityCount, SDL_FRect rects[], c_color colors[], SDL
 		.green = 100,
 		.blue = 100
 	};
+	printf("<HOUSE_SPAWNED> %zu", *p_entityCount);
 	(*p_entityCount)++;
-	printf("<HOUSE_SPAWNED>");
 	printfFRect(p_house_rect);
 }
 
-void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, SDL_FRect rects[], c_color colors[], c_health healths[], bool player_controlled[]) {
-	spawn_house(p_entityCount, rects, colors, p_display_bounds);
+void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, c_oxygenator oxygenators[], SDL_FRect rects[], c_color colors[], c_health healths[], bool player_controlled[]) {
+	spawn_house(p_entityCount, oxygenators, rects, colors, p_display_bounds);
 	SDL_FRect character_spawn_bounds;
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
 	spawn_characters(10, p_entityCount, rects, colors, healths, &character_spawn_bounds);
 	spawn_player(p_entityCount, player_controlled, rects, colors, healths, &character_spawn_bounds);
 }
 
-void move_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], bool left, bool right, bool up, bool down) {
+void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], bool left, bool right, bool up, bool down) {
 	float pixels_per_foot = 50.0f;
 	float fps = 10.0f;
 	float fpns = fps / 1000000000;
@@ -106,6 +169,7 @@ void move_player(long *p_time_since_last_tick, size_t *p_entityCount, bool playe
 	}
 }
 
+// TODO: This renders a health bar above houses and it should not
 void render_characters(size_t *p_entityCount, c_health healths[], SDL_FRect rects[], SDL_Renderer *p_sdl_renderer) {
 	SDL_FRect health_background = {
 		.x = 0,
@@ -156,6 +220,7 @@ int main() {
 	c_color colors[MAX_ENTITY_COUNT] = {};
 	bool player_controlled[MAX_ENTITY_COUNT] = {false};
 	c_health healths[MAX_ENTITY_COUNT] = {};
+	c_oxygenator oxygenators[MAX_ENTITY_COUNT] = {false};
 
 	SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_EVENTS);
 	SDL_Rect displayBounds;
@@ -168,7 +233,7 @@ int main() {
 	printf("Detected the following display bounds: { w: %d, h: %d } for displayId: %d\n", displayBounds.w, displayBounds.h, primaryDisplayId);
 
 	SDL_CreateWindowAndRenderer("Worlds Below", displayBounds.w, displayBounds.h, SDL_WINDOW_FULLSCREEN, &p_sdl_window, &p_sdl_renderer);
-	init(&displayBounds, &entityCount, rects, colors, healths, player_controlled);
+	init(&displayBounds, &entityCount, oxygenators, rects, colors, healths, player_controlled);
 	printf("ENTITY COUNT: %zu\n", entityCount);
 
 	bool player_left = false;
@@ -188,7 +253,7 @@ int main() {
 		timespec_get(&end, TIME_UTC);
 		time_since_last_tick = ((end.tv_sec - start.tv_sec) * 1000000000 ) + (end.tv_nsec - start.tv_nsec);
 		timespec_get(&start, TIME_UTC);
-		printf("NS SINCE LAST TICK: %ld\n", time_since_last_tick);
+		//printf("NS SINCE LAST TICK: %ld\n", time_since_last_tick);
 
 		SDL_Event event;
 		while(SDL_PollEvent(&event)) {
@@ -242,7 +307,7 @@ int main() {
 					running = false;
 					break;
 				default: 
-					//printf("detected an unhandled event.\n");
+					printf("detected an unhandled event.\n");
 					break;
 			}
 		}
@@ -270,7 +335,8 @@ int main() {
 		render_characters(&entityCount, healths, rects, p_sdl_renderer);
 		SDL_RenderDebugText(p_sdl_renderer, 10, 10, str);
 		SDL_RenderPresent(p_sdl_renderer);
-		move_player(&time_since_last_tick, &entityCount, player_controlled, rects, player_left, player_right, player_up, player_down);
+		update_player(&time_since_last_tick, &entityCount, player_controlled, rects, player_left, player_right, player_up, player_down);
+		sys_health_oxygenator_boundingBox(&time_since_last_tick, &entityCount, healths, oxygenators, rects);
 
 	}
 	cleanup(p_sdl_window);
