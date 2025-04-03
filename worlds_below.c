@@ -5,6 +5,7 @@
 
 const int MAX_ENTITY_COUNT = 1000;
 const int MAX_HEALTH = 100;
+const int NANO_SECONDS_PER_SECOND = 1000000000;
 
 void printfFRect(SDL_FRect *p_sdl_f_rect) {
 	printf("{ x: %f, y: %f, w: %f, h: %f }\n", p_sdl_f_rect->x, p_sdl_f_rect->y, p_sdl_f_rect->w, p_sdl_f_rect->h);
@@ -54,7 +55,7 @@ bool overlaps(c_boundingBox *pBoundingBoxA, c_boundingBox *pBoundingBoxB) {
 
 void sys_health_oxygenator_boundingBox(long *p_time_since_last_tick, size_t *pEntityCount, c_health healths[], c_oxygenator oxygenators[], c_boundingBox boundingBoxes[]) {
 	const float O2_RECOVERY_RATE_PER_SECOND = 5;
-	const float O2_RECOVERY_RATE_PER_NANOSECOND = O2_RECOVERY_RATE_PER_SECOND / 1000000000;
+	const float O2_RECOVERY_RATE_PER_NANOSECOND = O2_RECOVERY_RATE_PER_SECOND / NANO_SECONDS_PER_SECOND;
 	float delta = (*p_time_since_last_tick) * O2_RECOVERY_RATE_PER_NANOSECOND;
 	for(size_t i = 0; i < *pEntityCount; i++) {
 		c_health *pHealth = &healths[i];
@@ -147,7 +148,7 @@ void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, c_oxygenator oxygen
 void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], bool left, bool right, bool up, bool down) {
 	float pixels_per_foot = 50.0f;
 	float fps = 10.0f;
-	float fpns = fps / 1000000000;
+	float fpns = fps / NANO_SECONDS_PER_SECOND;
 	float delta = ((*p_time_since_last_tick) * fpns) * pixels_per_foot;
 
 	for(size_t i = 0; i < *p_entityCount; i++) {
@@ -251,7 +252,7 @@ int main() {
 	bool running = true;
 	while(running) {
 		timespec_get(&end, TIME_UTC);
-		time_since_last_tick = ((end.tv_sec - start.tv_sec) * 1000000000 ) + (end.tv_nsec - start.tv_nsec);
+		time_since_last_tick = ((end.tv_sec - start.tv_sec) * NANO_SECONDS_PER_SECOND ) + (end.tv_nsec - start.tv_nsec);
 		timespec_get(&start, TIME_UTC);
 		//printf("NS SINCE LAST TICK: %ld\n", time_since_last_tick);
 
@@ -322,7 +323,7 @@ int main() {
 
 		time_since_last_fps_calc += time_since_last_tick;
 		frame_count += 1;
-		if(time_since_last_fps_calc > 1000000000) {
+		if(time_since_last_fps_calc > NANO_SECONDS_PER_SECOND) {
 			fps = frame_count;
 			frame_count = 0;
 			time_since_last_fps_calc = 0;
