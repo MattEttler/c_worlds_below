@@ -336,8 +336,13 @@ int main() {
 		char* str = malloc(length + 1);
 		snprintf(str, length + 1, "FPS: %u", fps);
 
+		int entityCountLength = snprintf(NULL, 0, "ENTITY COUNT: %zu", entityCount);
+		char* entityCountStr = malloc(entityCountLength + 1);
+		snprintf(entityCountStr, entityCountLength + 1, "ENTITY_COUNT: %zu", entityCount);
+
 		render_characters(&entityCount, healths, rects, p_sdl_renderer);
 		SDL_RenderDebugText(p_sdl_renderer, 10, 10, str);
+		SDL_RenderDebugText(p_sdl_renderer, 10, 20, entityCountStr);
 		SDL_RenderPresent(p_sdl_renderer);
 		update_player(&time_since_last_tick, &entityCount, player_controlled, rects, player_left, player_right, player_up, player_down);
 		sys_health_oxygenator_boundingBox(&time_since_last_tick, &entityCount, healths, oxygenators, rects);
