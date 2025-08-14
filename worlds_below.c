@@ -60,7 +60,7 @@ void sys_health_oxygenator_boundingBox(long *p_time_since_last_tick, size_t *pEn
 	for(size_t i = 0; i < *pEntityCount; i++) {
 		c_health *pHealth = &healths[i];
 		c_boundingBox *pBoundingBoxA = &boundingBoxes[i];
-		bool boundingBoxWithHealth = (pHealth != NULL && pBoundingBoxA != NULL);
+		bool boundingBoxWithHealth = (*pHealth != -1 && pBoundingBoxA != NULL);
 		if(boundingBoxWithHealth) {
 			bool oxygenatorAndHealthOverlap = false;
 			for(size_t j = 0; j < *pEntityCount; j++) {
@@ -90,7 +90,7 @@ void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, SDL_FRect rect
 	uint32_t character_width = 50;
 	uint32_t character_height = 50;
 	for(int i = 0; i < spawnCount; i++) {
-		size_t entity = (*p_entityCount) + i;
+		size_t entity = (*p_entityCount);
 		rects[entity] = (SDL_FRect) {
 			.x = rand() / (RAND_MAX / (p_rect_spawn_bounds->w - character_width + 1)) + p_rect_spawn_bounds->x,
 			.y = rand() / (RAND_MAX / (p_rect_spawn_bounds->h - character_height + 1)) + p_rect_spawn_bounds->y,
@@ -138,6 +138,9 @@ void spawn_house(size_t *p_entityCount, c_oxygenator oxygenators[], SDL_FRect re
 }
 
 void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, c_oxygenator oxygenators[], SDL_FRect rects[], c_color colors[], c_health healths[], bool player_controlled[]) {
+	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
+		healths[i] = -1;
+	}
 	spawn_house(p_entityCount, oxygenators, rects, colors, p_display_bounds);
 	SDL_FRect character_spawn_bounds;
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
@@ -186,7 +189,7 @@ void render_characters(size_t *p_entityCount, c_health healths[], SDL_FRect rect
 	};
 
 	for(size_t i = 0; i < *p_entityCount; i++) {
-		if(&healths[i] != NULL && &rects[i] != NULL) {
+		if(healths[i] != -1 && &rects[i] != NULL) {
 			float health_x = rects[i].x - (health_background.w / 2) + (rects[i].w / 2);
 			float health_y = rects[i].y - 30;
 
