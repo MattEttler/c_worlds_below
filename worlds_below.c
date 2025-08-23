@@ -173,8 +173,7 @@ void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool pla
 	}
 }
 
-// TODO: This renders a health bar above houses and it should not
-void render_characters(size_t *p_entityCount, c_health healths[], SDL_FRect rects[], SDL_Renderer *p_sdl_renderer) {
+void render_characters(size_t *p_entityCount, c_health healths[], SDL_FRect rects[], c_color colors[], SDL_Renderer *p_sdl_renderer) {
 	SDL_FRect health_background = {
 		.x = 0,
 		.y = 0,
@@ -189,7 +188,12 @@ void render_characters(size_t *p_entityCount, c_health healths[], SDL_FRect rect
 	};
 
 	for(size_t i = 0; i < *p_entityCount; i++) {
-		if(healths[i] != -1 && &rects[i] != NULL) {
+		if(&rects[i] != NULL) {
+			if(&colors[i] != NULL) {
+				SDL_SetRenderDrawColor(p_sdl_renderer, colors[i].red, colors[i].green, colors[i].blue, SDL_ALPHA_OPAQUE);
+				SDL_RenderFillRect(p_sdl_renderer, &rects[i]);
+			}
+		if(healths[i] != -1) {
 			float health_x = rects[i].x - (health_background.w / 2) + (rects[i].w / 2);
 			float health_y = rects[i].y - 30;
 
@@ -204,6 +208,7 @@ void render_characters(size_t *p_entityCount, c_health healths[], SDL_FRect rect
 			// Render Green Bar Background
 			SDL_SetRenderDrawColor(p_sdl_renderer, 0, 255, 0, 100);
 			SDL_RenderFillRect(p_sdl_renderer, &health_foreground);
+		}
 		}
 	}
 }
@@ -322,7 +327,7 @@ int main() {
 		SDL_SetRenderDrawColor(p_sdl_renderer, 0, 0, 20, 0x00);
 		SDL_RenderClear(p_sdl_renderer);
 
-
+		render_characters(&entityCount, healths, rects, colors, p_sdl_renderer);
 
 		time_since_last_fps_calc += time_since_last_tick;
 		frame_count += 1;
@@ -340,7 +345,6 @@ int main() {
 		char* entityCountStr = malloc(entityCountLength + 1);
 		snprintf(entityCountStr, entityCountLength + 1, "ENTITY_COUNT: %zu", entityCount);
 
-		render_characters(&entityCount, healths, rects, p_sdl_renderer);
 		SDL_RenderDebugText(p_sdl_renderer, 10, 10, str);
 		SDL_RenderDebugText(p_sdl_renderer, 10, 20, entityCountStr);
 		SDL_RenderPresent(p_sdl_renderer);
