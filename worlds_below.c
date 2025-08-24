@@ -206,22 +206,22 @@ void render_characters(size_t *p_entityCount, c_health healths[], SDL_FRect rect
 				SDL_SetRenderDrawColor(p_sdl_renderer, colors[i].red, colors[i].green, colors[i].blue, SDL_ALPHA_OPAQUE);
 				SDL_RenderFillRect(p_sdl_renderer, &rects[i]);
 			}
-		if(healths[i] != -1) {
-			float health_x = rects[i].x - (health_background.w / 2) + (rects[i].w / 2);
-			float health_y = rects[i].y - 30;
+			if(healths[i] != -1) {
+				float health_x = rects[i].x - (health_background.w / 2) + (rects[i].w / 2);
+				float health_y = rects[i].y - 30;
 
-			health_background.x = health_x;
-			health_background.y = health_y;
-			health_foreground.x = health_x;
-			health_foreground.y = health_y - (health_background.h / 2);
-			health_foreground.w = ((float)healths[i] / MAX_HEALTH ) * health_background.w;
-			// Render Red Bar Background
-			SDL_SetRenderDrawColor(p_sdl_renderer, 255, 0, 0, SDL_ALPHA_OPAQUE);
-			SDL_RenderFillRect(p_sdl_renderer, &health_background);
-			// Render Green Bar Background
-			SDL_SetRenderDrawColor(p_sdl_renderer, 0, 255, 0, 100);
-			SDL_RenderFillRect(p_sdl_renderer, &health_foreground);
-		}
+				health_background.x = health_x;
+				health_background.y = health_y;
+				health_foreground.x = health_x;
+				health_foreground.y = health_y - (health_background.h / 2);
+				health_foreground.w = ((float)healths[i] / MAX_HEALTH ) * health_background.w;
+				// Render Red Bar Background
+				SDL_SetRenderDrawColor(p_sdl_renderer, 255, 0, 0, SDL_ALPHA_OPAQUE);
+				SDL_RenderFillRect(p_sdl_renderer, &health_background);
+				// Render Green Bar Background
+				SDL_SetRenderDrawColor(p_sdl_renderer, 0, 255, 0, 100);
+				SDL_RenderFillRect(p_sdl_renderer, &health_foreground);
+			}
 		}
 	}
 }
