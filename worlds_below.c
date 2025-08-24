@@ -1,5 +1,6 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_init.h>
+#include <SDL3_ttf/SDL_ttf.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -7,10 +8,22 @@ const int MAX_ENTITY_COUNT = 1000;
 const int MAX_HEALTH = 100;
 const int NANO_SECONDS_PER_SECOND = 1000000000;
 
+static SDL_Texture *texture = NULL;
+static TTF_Font *font = NULL;
+
+extern unsigned char tiny_ttf[];
+extern unsigned int tiny_ttf_len;
+
 void printfFRect(SDL_FRect *p_sdl_f_rect) {
 	printf("{ x: %f, y: %f, w: %f, h: %f }\n", p_sdl_f_rect->x, p_sdl_f_rect->y, p_sdl_f_rect->w, p_sdl_f_rect->h);
 }
 
+enum GameState {
+	RUNNING,
+	PAUSED,
+	LOST,
+	WON
+};
 
 // =======================================================================================
 //  ┌─┐┌─┐┌┬┐┌─┐┌─┐┌┐┌┌─┐┌┐┌┌┬┐┌─┐
@@ -245,7 +258,35 @@ int main() {
 	printf("Detected the following display bounds: { w: %d, h: %d } for displayId: %d\n", displayBounds.w, displayBounds.h, primaryDisplayId);
 
 	SDL_CreateWindowAndRenderer("Worlds Below", displayBounds.w, displayBounds.h, SDL_WINDOW_FULLSCREEN, &p_sdl_window, &p_sdl_renderer);
+
+	SDL_Color color = { 255, 255, 255, SDL_ALPHA_OPAQUE };
+	SDL_Surface *text;
+
+	if (!TTF_Init()) {
+		SDL_Log("Couldn't initialise SDL_ttf: %s\n", SDL_GetError());
+		return SDL_APP_FAILURE;
+	}
+
+	/* Open the font */
+	font = TTF_OpenFontIO(SDL_IOFromConstMem(tiny_ttf, tiny_ttf_len), true, 18.0f);
+	if (!font) {
+		SDL_Log("Couldn't open font: %s\n", SDL_GetError());
+		return SDL_APP_FAILURE;
+	}
+
+	/* Create the text */
+	text = TTF_RenderText_Blended(font, "Hello World!", 0, color);
+	if (text) {
+		texture = SDL_CreateTextureFromSurface(p_sdl_renderer, text);
+		SDL_DestroySurface(text);
+	}
+	if (!texture) {
+		SDL_Log("Couldn't create text: %s\n", SDL_GetError());
+		return SDL_APP_FAILURE;
+	}
+
 	init(&displayBounds, &entityCount, oxygenators, rects, colors, healths, player_controlled);
+	enum GameState game_state = RUNNING;
 	printf("ENTITY COUNT: %zu\n", entityCount);
 
 	bool player_left = false;
@@ -260,6 +301,10 @@ int main() {
 	uint32_t frame_count = 0;
 	timespec_get(&start, TIME_UTC);
 
+	int w = 0, h = 0;
+	SDL_FRect dst;
+	const float scale = 2.0f;
+
 	bool running = true;
 	while(running) {
 		timespec_get(&end, TIME_UTC);
@@ -267,67 +312,148 @@ int main() {
 		timespec_get(&start, TIME_UTC);
 		//printf("NS SINCE LAST TICK: %ld\n", time_since_last_tick);
 
-		SDL_Event event;
-		while(SDL_PollEvent(&event)) {
-			switch(event.type) {
-				case SDL_EVENT_KEY_DOWN: 
-					// TODO: add proper logging with levels like trace/debug
-					// printf("detected a keyboard event. %d\n", event.key.key);
-					switch(event.key.key) {
-						case SDLK_ESCAPE:
-							if(event.key.key == SDLK_ESCAPE) {
-								running = false;
-							}
-							break;
-						case SDLK_LEFT:
-							printf("LEFT\n");
-							player_left = true;
-							break;
-						case SDLK_RIGHT:
-							printf("RIGHT\n");
-							player_right = true;
-							break;
-						case SDLK_UP:
-							printf("UP\n");
-							player_up = true;
-							break;
-						case SDLK_DOWN:
-							printf("DOWN\n");
-							player_down = true;
-							break;
-					}
-					break;
-				case SDL_EVENT_KEY_UP: 
-					// TODO: add proper logging with levels like trace/debug
-					switch(event.key.key) {
-						case SDLK_LEFT:
-							player_left = false;
-							break;
-						case SDLK_RIGHT:
-							player_right = false;
-							break;
-						case SDLK_UP:
-							player_up = false;
-							break;
-						case SDLK_DOWN:
-							player_down = false;
-							break;
-					}
-					break;
-				case SDL_EVENT_QUIT:
-					printf("detected a quit event.\n");
-					running = false;
-					break;
-				default: 
-					printf("detected an unhandled event.\n");
-					break;
-			}
-		}
-		
 		SDL_SetRenderDrawColor(p_sdl_renderer, 0, 0, 20, 0x00);
 		SDL_RenderClear(p_sdl_renderer);
 
+
+
+
+		SDL_SetRenderScale(p_sdl_renderer, 1.0, 1.0);
 		render_characters(&entityCount, healths, rects, colors, p_sdl_renderer);
+
+		/* Center the text and scale it up */
+		SDL_GetRenderOutputSize(p_sdl_renderer, &w, &h);
+		SDL_SetRenderScale(p_sdl_renderer, scale, scale);
+		SDL_GetTextureSize(texture, &dst.w, &dst.h);
+		dst.x = ((w / scale) - dst.w) / 2;
+		dst.y = ((h / scale) - dst.h) / 2;
+		//SDL_RenderTexture(p_sdl_renderer, texture, NULL, &dst);
+		SDL_SetRenderScale(p_sdl_renderer, 1.0, 1.0);
+
+
+		switch(game_state) {
+
+			case RUNNING: {
+					      update_player(&time_since_last_tick, &entityCount, player_controlled, rects, player_left, player_right, player_up, player_down);
+					      sys_health_oxygenator_boundingBox(&time_since_last_tick, &entityCount, healths, oxygenators, rects);
+
+					      SDL_Event event;
+					      while(SDL_PollEvent(&event)) {
+						      switch(event.type) {
+							      case SDL_EVENT_KEY_DOWN: 
+								      // TODO: add proper logging with levels like trace/debug
+								      // printf("detected a keyboard event. %d\n", event.key.key);
+								      switch(event.key.key) {
+									      case SDLK_Q:
+										      running = false;
+										      break;
+									      case SDLK_LEFT:
+										      printf("LEFT\n");
+										      player_left = true;
+										      break;
+									      case SDLK_RIGHT:
+										      printf("RIGHT\n");
+										      player_right = true;
+										      break;
+									      case SDLK_UP:
+										      printf("UP\n");
+										      player_up = true;
+										      break;
+									      case SDLK_DOWN:
+										      printf("DOWN\n");
+										      player_down = true;
+										      break;
+									      case SDLK_ESCAPE:
+										      game_state = PAUSED;
+										      break;
+								      }
+								      break;
+							      case SDL_EVENT_KEY_UP: 
+								      // TODO: add proper logging with levels like trace/debug
+								      switch(event.key.key) {
+									      case SDLK_LEFT:
+										      player_left = false;
+										      break;
+									      case SDLK_RIGHT:
+										      player_right = false;
+										      break;
+									      case SDLK_UP:
+										      player_up = false;
+										      break;
+									      case SDLK_DOWN:
+										      player_down = false;
+										      break;
+								      }
+								      break;
+							      case SDL_EVENT_QUIT:
+								      printf("detected a quit event.\n");
+								      running = false;
+								      break;
+							      default: 
+								      printf("detected an unhandled event.\n");
+								      break;
+						      }
+					      }
+					      break;
+				      }
+			case PAUSED: {
+					     /* Create the text */
+					     SDL_Texture *pause_text_texture = NULL;
+					     SDL_Surface *pause_text;
+					     pause_text = TTF_RenderText_Blended(font, "PAUSED", 0, color);
+					     if (pause_text) {
+						     pause_text_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, pause_text);
+						     SDL_DestroySurface(text);
+					     }
+					     if (!pause_text_texture) {
+						     SDL_Log("Couldn't create text: %s\n", SDL_GetError());
+						     return SDL_APP_FAILURE;
+					     }
+
+					     SDL_GetRenderOutputSize(p_sdl_renderer, &w, &h);
+					     SDL_SetRenderScale(p_sdl_renderer, scale, scale);
+					     SDL_GetTextureSize(pause_text_texture, &dst.w, &dst.h);
+					     dst.x = ((w / scale) - dst.w) / 2;
+					     dst.y = ((h / scale) - dst.h) / 2;
+					     SDL_RenderTexture(p_sdl_renderer, pause_text_texture, NULL, &dst);
+
+					     SDL_Event event;
+					     while(SDL_PollEvent(&event)) {
+						     switch(event.type) {
+							     case SDL_EVENT_KEY_DOWN: 
+								     // TODO: add proper logging with levels like trace/debug
+								     // printf("detected a keyboard event. %d\n", event.key.key);
+								     switch(event.key.key) {
+									     case SDLK_ESCAPE:
+										     game_state = RUNNING;
+										     break;
+									     case SDLK_Q:
+										     running = false;
+										     break;
+								     }
+						     }
+					     }
+					     break;
+				     }
+			case LOST: {
+					   /* Create the text */
+					   SDL_Texture *lost_text_texture = NULL;
+					   SDL_Surface *lost_text;
+					   lost_text = TTF_RenderText_Blended(font, "LOST", 0, color);
+					   if (lost_text) {
+						   lost_text_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, lost_text);
+						   SDL_DestroySurface(text);
+					   }
+					   if (!lost_text_texture) {
+						   SDL_Log("Couldn't create text: %s\n", SDL_GetError());
+						   return SDL_APP_FAILURE;
+					   }
+				   }
+			default: { 
+					 printf("WARNING: Unknown GameState detected: %d\n", game_state); 
+					 break;
+				 }
+		}
 
 		time_since_last_fps_calc += time_since_last_tick;
 		frame_count += 1;
@@ -348,8 +474,6 @@ int main() {
 		SDL_RenderDebugText(p_sdl_renderer, 10, 10, str);
 		SDL_RenderDebugText(p_sdl_renderer, 10, 20, entityCountStr);
 		SDL_RenderPresent(p_sdl_renderer);
-		update_player(&time_since_last_tick, &entityCount, player_controlled, rects, player_left, player_right, player_up, player_down);
-		sys_health_oxygenator_boundingBox(&time_since_last_tick, &entityCount, healths, oxygenators, rects);
 
 	}
 	cleanup(p_sdl_window);
