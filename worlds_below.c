@@ -2,7 +2,18 @@
 #include <SDL3/SDL_init.h>
 #include <SDL3_ttf/SDL_ttf.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
+
+#define min(a,b)  \
+({ __typeof__ (a) _a = (a); \
+__typeof__ (b) _b = (b); \
+_a < _b ? _a : _b; })
+
+#define max(a,b)  \
+({ __typeof__ (a) _a = (a); \
+__typeof__ (b) _b = (b); \
+_a > _b ? _a : _b; })
 
 const int MAX_ENTITY_COUNT = 1000;
 const int MAX_HEALTH = 100;
@@ -240,9 +251,9 @@ int main() {
 	// components
 	SDL_FRect rects[MAX_ENTITY_COUNT] = {};
 	c_color colors[MAX_ENTITY_COUNT] = {};
-	bool player_controlled[MAX_ENTITY_COUNT] = {false};
+	bool player_controlled[MAX_ENTITY_COUNT] = {};
 	c_health healths[MAX_ENTITY_COUNT] = {};
-	c_oxygenator oxygenators[MAX_ENTITY_COUNT] = {false};
+	c_oxygenator oxygenators[MAX_ENTITY_COUNT] = {};
 
 	SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_EVENTS);
 
