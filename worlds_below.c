@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <time.h>
 
+#include "ecs.h"
+
 #define min(a,b)  \
 ({ __typeof__ (a) _a = (a); \
 __typeof__ (b) _b = (b); \
@@ -15,7 +17,6 @@ _a < _b ? _a : _b; })
 __typeof__ (b) _b = (b); \
 _a > _b ? _a : _b; })
 
-const int MAX_ENTITY_COUNT = 1000;
 const int MAX_HEALTH = 100;
 const int NANO_SECONDS_PER_SECOND = 1000000000;
 
@@ -45,7 +46,6 @@ enum GameState {
 // - primitive data types when possible
 // - prefix with `c_` to indicate it is a component
 
-typedef bool c_character;
 typedef struct c_color {
 	int red;
 	int green;
@@ -56,6 +56,7 @@ typedef float c_health;
 // TODO: this should be refactored to not directly depend on the SDL_FRect... especially since we will eventually be drawing polygons.
 typedef SDL_FRect c_boundingBox;
 
+COMPONENT(Oxygenators, c_oxygenator)
 
 // =======================================================================================
 //  ┌─┐┬ ┬┌─┐┌┬┐┌─┐┌┬┐┌─┐
@@ -77,21 +78,23 @@ bool overlaps(c_boundingBox *pBoundingBoxA, c_boundingBox *pBoundingBoxB) {
 	return !result;
 }
 
-void sys_health_oxygenator_boundingBox(long *p_time_since_last_tick, size_t *pEntityCount, c_health healths[], c_oxygenator oxygenators[], c_boundingBox boundingBoxes[]) {
+void sys_health_oxygenator_boundingBox(long *p_time_since_last_tick, size_t *pEntityCount, c_health healths[], Oxygenators* oxygenators, c_boundingBox boundingBoxes[]) {
 	const float O2_RECOVERY_RATE_PER_SECOND = 5;
 	const float O2_RECOVERY_RATE_PER_NANOSECOND = O2_RECOVERY_RATE_PER_SECOND / NANO_SECONDS_PER_SECOND;
 	float delta = (*p_time_since_last_tick) * O2_RECOVERY_RATE_PER_NANOSECOND;
-	for(size_t i = 0; i < *pEntityCount; i++) {
-		c_health *pHealth = &healths[i];
-		c_boundingBox *pBoundingBoxA = &boundingBoxes[i];
-		bool boundingBoxWithHealth = (*pHealth != -1 && pBoundingBoxA != NULL);
-		if(boundingBoxWithHealth) {
-			bool oxygenatorAndHealthOverlap = false;
-			for(size_t j = 0; j < *pEntityCount; j++) {
-				if(i == j) {
+	
+	for(size_t j = 0; j < oxygenators->count; j++) {
+		Entity oxygenator_entity = oxygenators->entity_index[j];
+		for(size_t i = 0; i < *pEntityCount; i++) {
+			c_health *pHealth = &healths[i];
+			c_boundingBox *pBoundingBoxA = &boundingBoxes[i];
+			bool boundingBoxWithHealth = (*pHealth != -1 && pBoundingBoxA != NULL);
+			if(boundingBoxWithHealth) {
+				bool oxygenatorAndHealthOverlap = false;
+				if(i == oxygenator_entity) {
 					continue;
 				}
-				c_oxygenator *pOxygenator = &oxygenators[j];
+				c_oxygenator *pOxygenator = get_Oxygenators(oxygenators, oxygenator_entity);				
 				c_boundingBox *pBoundingBoxB = &boundingBoxes[j];
 				bool oxygenatorWithBoundingBox = (pOxygenator != NULL && *pOxygenator && pBoundingBoxB != NULL);
 				if(oxygenatorWithBoundingBox) {
@@ -100,11 +103,11 @@ void sys_health_oxygenator_boundingBox(long *p_time_since_last_tick, size_t *pEn
 						break;
 					}
 				}
-			}
-			if(oxygenatorAndHealthOverlap) {
-				*pHealth = min(MAX_HEALTH, *pHealth+delta);
-			} else {
-				*pHealth = max(0, *pHealth-delta);
+				if(oxygenatorAndHealthOverlap) {
+					*pHealth = min(MAX_HEALTH, *pHealth+delta);
+				} else {
+					*pHealth = max(0, *pHealth-delta);
+				}
 			}
 		}
 	}
@@ -139,10 +142,10 @@ void spawn_player(size_t *p_entityCount, bool player_controlled[], SDL_FRect rec
 	printf("<PLAYER SPAWNED>%s\n", player_controlled[*p_entityCount] ? "true" : "false");
 }
 
-void spawn_house(size_t *p_entityCount, c_oxygenator oxygenators[], SDL_FRect rects[], c_color colors[], SDL_Rect *p_display_bounds) {
+void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, SDL_FRect rects[], c_color colors[], SDL_Rect *p_display_bounds) {
 	const uint32_t HOUSE_WIDTH = 300;
 	const uint32_t HOUSE_HEIGHT = 300;
-	oxygenators[*p_entityCount] = true;
+	add_Oxygenators(oxygenators, *p_entityCount, true);
 	SDL_FRect *p_house_rect = &rects[*p_entityCount];
 	*p_house_rect = (SDL_FRect) {
 		.w = HOUSE_WIDTH,
@@ -161,7 +164,7 @@ void spawn_house(size_t *p_entityCount, c_oxygenator oxygenators[], SDL_FRect re
 	printfFRect(p_house_rect);
 }
 
-void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, c_oxygenator oxygenators[], SDL_FRect rects[], c_color colors[], c_health healths[], bool player_controlled[]) {
+void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, SDL_FRect rects[], c_color colors[], c_health healths[], bool player_controlled[]) {
 	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
 		healths[i] = -1;
 	}
@@ -212,27 +215,23 @@ void render_characters(size_t *p_entityCount, c_health healths[], SDL_FRect rect
 	};
 
 	for(size_t i = 0; i < *p_entityCount; i++) {
-		if(&rects[i] != NULL) {
-			if(&colors[i] != NULL) {
-				SDL_SetRenderDrawColor(p_sdl_renderer, colors[i].red, colors[i].green, colors[i].blue, SDL_ALPHA_OPAQUE);
-				SDL_RenderFillRect(p_sdl_renderer, &rects[i]);
-			}
-			if(healths[i] != -1) {
-				float health_x = rects[i].x - (health_background.w / 2) + (rects[i].w / 2);
-				float health_y = rects[i].y - 30;
+		SDL_SetRenderDrawColor(p_sdl_renderer, colors[i].red, colors[i].green, colors[i].blue, SDL_ALPHA_OPAQUE);
+		SDL_RenderFillRect(p_sdl_renderer, &rects[i]);
+		if(healths[i] != -1) {
+			float health_x = rects[i].x - (health_background.w / 2) + (rects[i].w / 2);
+			float health_y = rects[i].y - 30;
 
-				health_background.x = health_x;
-				health_background.y = health_y;
-				health_foreground.x = health_x;
-				health_foreground.y = health_y - (health_background.h / 2);
-				health_foreground.w = ((float)healths[i] / MAX_HEALTH ) * health_background.w;
-				// Render Red Bar Background
-				SDL_SetRenderDrawColor(p_sdl_renderer, 255, 0, 0, SDL_ALPHA_OPAQUE);
-				SDL_RenderFillRect(p_sdl_renderer, &health_background);
-				// Render Green Bar Background
-				SDL_SetRenderDrawColor(p_sdl_renderer, 0, 255, 0, 100);
-				SDL_RenderFillRect(p_sdl_renderer, &health_foreground);
-			}
+			health_background.x = health_x;
+			health_background.y = health_y;
+			health_foreground.x = health_x;
+			health_foreground.y = health_y - (health_background.h / 2);
+			health_foreground.w = ((float)healths[i] / MAX_HEALTH ) * health_background.w;
+			// Render Red Bar Background
+			SDL_SetRenderDrawColor(p_sdl_renderer, 255, 0, 0, SDL_ALPHA_OPAQUE);
+			SDL_RenderFillRect(p_sdl_renderer, &health_background);
+			// Render Green Bar Background
+			SDL_SetRenderDrawColor(p_sdl_renderer, 0, 255, 0, 100);
+			SDL_RenderFillRect(p_sdl_renderer, &health_foreground);
 		}
 	}
 }
@@ -247,13 +246,6 @@ int main() {
 	SDL_Renderer *p_sdl_renderer;
 
 	size_t entityCount = 0;
-
-	// components
-	SDL_FRect rects[MAX_ENTITY_COUNT] = {};
-	c_color colors[MAX_ENTITY_COUNT] = {};
-	bool player_controlled[MAX_ENTITY_COUNT] = {};
-	c_health healths[MAX_ENTITY_COUNT] = {};
-	c_oxygenator oxygenators[MAX_ENTITY_COUNT] = {};
 
 	SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_EVENTS);
 
@@ -296,7 +288,15 @@ int main() {
 		return SDL_APP_FAILURE;
 	}
 
-	init(&displayBounds, &entityCount, oxygenators, rects, colors, healths, player_controlled);
+	// components
+	SDL_FRect rects[MAX_ENTITY_COUNT] = {};
+	c_color colors[MAX_ENTITY_COUNT] = {};
+	bool player_controlled[MAX_ENTITY_COUNT] = {};
+	c_health healths[MAX_ENTITY_COUNT] = {};
+	// components_v2
+	Oxygenators oxygenators = {0};
+
+	init(&displayBounds, &entityCount, &oxygenators, rects, colors, healths, player_controlled);
 	enum GameState game_state = RUNNING;
 	printf("ENTITY COUNT: %zu\n", entityCount);
 
@@ -346,7 +346,7 @@ int main() {
 
 			case RUNNING: {
 					      update_player(&time_since_last_tick, &entityCount, player_controlled, rects, player_left, player_right, player_up, player_down);
-					      sys_health_oxygenator_boundingBox(&time_since_last_tick, &entityCount, healths, oxygenators, rects);
+					      sys_health_oxygenator_boundingBox(&time_since_last_tick, &entityCount, healths, &oxygenators, rects);
 
 					      SDL_Event event;
 					      while(SDL_PollEvent(&event)) {

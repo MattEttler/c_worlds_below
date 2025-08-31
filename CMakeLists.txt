@@ -17,3 +17,4 @@ PRIVATE
 
 target_link_libraries(worlds_below SDL3::SDL3)
 target_link_libraries(worlds_below SDL3_ttf::SDL3_ttf)
+target_include_directories(worlds_below PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

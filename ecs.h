@@ -1,0 +1,43 @@
+#ifndef ECS_H
+#define ECS_H
+
+#include <stdint.h>
+
+typedef uint32_t Entity;
+#define MAX_ENTITY_COUNT 1000
+
+#define COMPONENT(ComponentName, DataType)					\
+typedef struct {								\
+	DataType data[MAX_ENTITY_COUNT];					\
+	Entity entities[MAX_ENTITY_COUNT];					\
+	uint32_t entity_index[MAX_ENTITY_COUNT];				\
+	size_t count;								\
+} ComponentName;								\
+										\
+void add_##ComponentName(ComponentName* comp, Entity e, DataType value) { 	\
+	comp->entity_index[e] = comp->count;					\
+	comp->data[comp->count] = value;					\
+	comp->entities[comp->count] = e;					\
+	comp->count++;								\
+}										\
+										\
+DataType* get_##ComponentName(ComponentName* comp, Entity e) {			\
+	size_t idx = comp->entity_index[e];					\
+	if (idx < comp->count && comp->entities[idx] == e) {			\
+		return &comp->data[idx];					\
+	}									\
+	return NULL;								\
+}										\
+/*										\*/
+/*void remove_##componentname(componentname* comp, entity e) {			\*/
+/*	size_t idx = comp->entity_index[e];					\*/
+/*	if (idx >= comp->count || comp->entities[idx] != e) return;		\*/
+/*	size_t last_idx = comp->count - 1;					\*/
+/*	comp->data[idx] = comp->data[last_idx];					\*/
+/*	entity last_entity = comp->entities[last_idx];				\*/
+/*	comp->entities[idx] = last_entity;					\*/
+/*	comp->entity_index[last_entity] = idx;					\*/
+/*	comp->count--;								\*/
+/*}*/
+
+#endif // ECS_H
