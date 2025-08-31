@@ -100,13 +100,11 @@ void sys_health_oxygenator_boundingBox(long *p_time_since_last_tick, size_t *pEn
 				if(oxygenatorWithBoundingBox) {
 					oxygenatorAndHealthOverlap = overlaps(pBoundingBoxA, pBoundingBoxB);
 					if(oxygenatorAndHealthOverlap) {
+						*pHealth = min(MAX_HEALTH, *pHealth+delta);
 						break;
+					} else {
+						*pHealth = max(0, *pHealth-delta);
 					}
-				}
-				if(oxygenatorAndHealthOverlap) {
-					*pHealth = min(MAX_HEALTH, *pHealth+delta);
-				} else {
-					*pHealth = max(0, *pHealth-delta);
 				}
 			}
 		}
