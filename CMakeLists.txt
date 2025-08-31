@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.26)
 project(worlds_below C CXX)
 
 set(CMAKE_BUILD_TYPE Debug)
-set(CMAKE_C_FLAGS_DEBUG "-O0 -g -ggdb" CACHE STRING "" FORCE)
-set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-Wl,-O0" CACHE STRING "" FORCE)
+set(CMAKE_C_FLAGS_DEBUG "-O0 -g -ggdb -Wall -Werror" CACHE STRING "" FORCE)
+set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-O0" CACHE STRING "" FORCE)
 
 find_package(SDL3 REQUIRED)
 find_package(SDL3_ttf REQUIRED)

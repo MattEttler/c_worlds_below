@@ -1,1 +1,3 @@
 /build
+[C|c]Make*
+build.ninja
