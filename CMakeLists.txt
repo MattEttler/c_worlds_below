@@ -18,3 +18,11 @@ PRIVATE
 target_link_libraries(worlds_below SDL3::SDL3)
 target_link_libraries(worlds_below SDL3_ttf::SDL3_ttf)
 target_include_directories(worlds_below PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Custom command to copy a folder
+add_custom_command(
+    TARGET worlds_below PRE_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_SOURCE_DIR}/resources" 
+    "${CMAKE_BINARY_DIR}/resources"
+)
