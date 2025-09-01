@@ -383,10 +383,12 @@ int main() {
 	printf("ENTITY COUNT: %zu\n", entityCount);
 
 	add_Sounds(&sounds, entityCount, (c_sound){ fname: "background-music.wav", repeat: true });
-	if (!init_sound(&sounds.data[entityCount])) {
+	c_sound* background_sound = get_Sounds(&sounds, entityCount);
+	if (!init_sound(background_sound)) {
 		SDL_Log("Failed to initialize sound: %s", SDL_GetError());
 	}
 
+	bool player_left = false;
 	bool player_right = false;
 	bool player_up = false;
 	bool player_down = false;
