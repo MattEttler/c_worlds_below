@@ -22,6 +22,7 @@ const int NANO_SECONDS_PER_SECOND = 1000000000;
 
 static SDL_Texture *texture = NULL;
 static TTF_Font *font = NULL;
+static SDL_AudioDeviceID audio_device = 0;
 
 extern unsigned char tiny_ttf[];
 extern unsigned int tiny_ttf_len;
@@ -55,8 +56,18 @@ typedef bool c_oxygenator;
 typedef float c_health;
 // TODO: this should be refactored to not directly depend on the SDL_FRect... especially since we will eventually be drawing polygons.
 typedef SDL_FRect c_boundingBox;
+typedef struct c_sound {
+	const char* fname;
+	uint8_t* wav_data;
+	uint32_t wav_data_len;
+	SDL_AudioStream* stream;
+	bool repeat;
+	bool played;
+} c_sound;
 
 COMPONENT(Oxygenators, c_oxygenator)
+COMPONENT(Healths, c_health)
+COMPONENT(Sounds, c_sound)
 
 // =======================================================================================
 //  ┌─┐┬ ┬┌─┐┌┬┐┌─┐┌┬┐┌─┐
@@ -66,7 +77,30 @@ COMPONENT(Oxygenators, c_oxygenator)
 //  `sys_<component_a>_<component_b>_...(entityCount, component_a[], component_b[])`
 //  where the system is named based on the data components required to operate the system,
 //  ideally in the same order as the parameters.
-//
+
+static bool init_sound(c_sound* sound) {
+	bool result = false;
+	SDL_AudioSpec spec;
+	char* wav_path = NULL;
+
+	SDL_asprintf(&wav_path, "%sresources/%s", SDL_GetBasePath(), sound->fname);
+	if (!SDL_LoadWAV(wav_path, &spec, &sound->wav_data, &sound->wav_data_len)) {
+		SDL_Log("Could not load .wav file: %s", SDL_GetError());
+		return false;
+	}
+
+	sound->stream = SDL_CreateAudioStream(&spec, NULL);
+	if (!sound->stream) {
+		SDL_Log("Failed to create audio stream: %s", SDL_GetError());
+	} else if (!SDL_BindAudioStream(audio_device, sound->stream)) {
+		SDL_Log("Failed to bind audio stream: %s", SDL_GetError());
+	} else {
+		result = true;
+	}
+
+	SDL_free(wav_path);
+	return result;
+}
 
 bool overlaps(c_boundingBox *pBoundingBoxA, c_boundingBox *pBoundingBoxB) {
 	bool result = (
@@ -78,28 +112,49 @@ bool overlaps(c_boundingBox *pBoundingBoxA, c_boundingBox *pBoundingBoxB) {
 	return !result;
 }
 
-void sys_health_oxygenator_boundingBox(long *p_time_since_last_tick, size_t *pEntityCount, c_health healths[], Oxygenators* oxygenators, c_boundingBox boundingBoxes[]) {
+void sys_sound(Sounds* sounds) {
+	for(size_t i = 0; i < sounds->count; i++) {
+		c_sound* sound = &sounds->data[i];
+		if (!sound->repeat) {
+			if (!sound->played) {
+				SDL_PutAudioStreamData(sound->stream, sound->wav_data, sound->wav_data_len);
+				sound->played = true;
+			}
+		}
+		else if (SDL_GetAudioStreamQueued(sound->stream) < sound->wav_data_len) {
+			sound->played = true;
+			SDL_PutAudioStreamData(sound->stream, sound->wav_data, sound->wav_data_len);
+		}
+				
+	}
+}
+
+void sys_health_oxygenator_boundingBox(long *p_time_since_last_tick, size_t *pEntityCount, Healths* healths, Oxygenators* oxygenators, c_boundingBox boundingBoxes[], Sounds* sounds) {
 	const float O2_RECOVERY_RATE_PER_SECOND = 5;
 	const float O2_RECOVERY_RATE_PER_NANOSECOND = O2_RECOVERY_RATE_PER_SECOND / NANO_SECONDS_PER_SECOND;
 	float delta = (*p_time_since_last_tick) * O2_RECOVERY_RATE_PER_NANOSECOND;
 	
 	for(size_t j = 0; j < oxygenators->count; j++) {
-		Entity oxygenator_entity = oxygenators->entity_index[j];
-		for(size_t i = 0; i < *pEntityCount; i++) {
-			c_health *pHealth = &healths[i];
-			c_boundingBox *pBoundingBoxA = &boundingBoxes[i];
+		Entity oxygenator_entity = oxygenators->entities[j];
+		c_oxygenator *pOxygenator = &oxygenators->data[j];				
+		bool o2_x_health = false;
+		for(size_t i = 0; i < healths->count; i++) {
+			Entity health_entity = healths->entities[i];
+			c_health *pHealth = &healths->data[i];
+			c_boundingBox *pBoundingBoxA = &boundingBoxes[health_entity];
 			bool boundingBoxWithHealth = (*pHealth != -1 && pBoundingBoxA != NULL);
 			if(boundingBoxWithHealth) {
 				bool oxygenatorAndHealthOverlap = false;
-				if(i == oxygenator_entity) {
+				// TODO: consider removing this.. I don't know why I would care about blocking this case.
+				if(health_entity == oxygenator_entity) {
 					continue;
 				}
-				c_oxygenator *pOxygenator = get_Oxygenators(oxygenators, oxygenator_entity);				
-				c_boundingBox *pBoundingBoxB = &boundingBoxes[j];
+				c_boundingBox *pBoundingBoxB = &boundingBoxes[oxygenator_entity];
 				bool oxygenatorWithBoundingBox = (pOxygenator != NULL && *pOxygenator && pBoundingBoxB != NULL);
 				if(oxygenatorWithBoundingBox) {
 					oxygenatorAndHealthOverlap = overlaps(pBoundingBoxA, pBoundingBoxB);
 					if(oxygenatorAndHealthOverlap) {
+						o2_x_health = true;	
 						*pHealth = min(MAX_HEALTH, *pHealth+delta);
 						break;
 					} else {
@@ -107,11 +162,24 @@ void sys_health_oxygenator_boundingBox(long *p_time_since_last_tick, size_t *pEn
 					}
 				}
 			}
+		
+		}
+		c_sound* pOxygenator_sound = get_Sounds(sounds, oxygenator_entity);
+		if(o2_x_health) {
+			if(pOxygenator_sound == NULL) {
+				add_Sounds(sounds, oxygenator_entity, (c_sound){ fname: "o2-refill.wav", repeat: false });
+				if (!init_sound(get_Sounds(sounds, oxygenator_entity))) {
+					SDL_Log("Failed to initialize sound: %s", SDL_GetError());
+				}
+			}
+		}
+		else if (pOxygenator_sound != NULL) {
+			remove_Sounds(sounds, oxygenator_entity);
 		}
 	}
 }
 
-void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, SDL_FRect rects[], c_color colors[], c_health healths[], SDL_FRect *p_rect_spawn_bounds) {
+void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, SDL_FRect rects[], c_color colors[], Healths* healths, SDL_FRect *p_rect_spawn_bounds) {
 	uint32_t character_width = 50;
 	uint32_t character_height = 50;
 	for(int i = 0; i < spawnCount; i++) {
@@ -127,14 +195,14 @@ void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, SDL_FRect rect
 				.green = 255,
 				.blue = 0,
 		};
-		healths[entity] = MAX_HEALTH;
+		add_Healths(healths, entity, MAX_HEALTH);
 		printf("<CHARACTER_SPAWNED> %zu", *p_entityCount);
 		(*p_entityCount)++;
 		printfFRect(&rects[entity]);
 	}
 }
 
-void spawn_player(size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], c_color colors[], c_health healths[], SDL_FRect *p_rect_spawn_bounds) {
+void spawn_player(size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], c_color colors[], Healths* healths, SDL_FRect *p_rect_spawn_bounds) {
 	player_controlled[*p_entityCount] = true;
 	spawn_characters(1, p_entityCount, rects, colors, healths, p_rect_spawn_bounds);
 	printf("<PLAYER SPAWNED>%s\n", player_controlled[*p_entityCount] ? "true" : "false");
@@ -162,9 +230,13 @@ void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, SDL_FRect rect
 	printfFRect(p_house_rect);
 }
 
-void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, SDL_FRect rects[], c_color colors[], c_health healths[], bool player_controlled[]) {
+void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, SDL_FRect rects[], c_color colors[], Healths* healths, bool player_controlled[], Sounds* sounds) {
 	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
-		healths[i] = -1;
+		healths->entities[i] = -1;
+		healths->data[i] = -1;
+		healths->entity_index[i] = -1;
+		sounds->entities[i] = -1;
+		sounds->entity_index[i] = -1;
 	}
 	spawn_house(p_entityCount, oxygenators, rects, colors, p_display_bounds);
 	SDL_FRect character_spawn_bounds;
@@ -198,7 +270,7 @@ void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool pla
 	}
 }
 
-void render_characters(size_t *p_entityCount, c_health healths[], SDL_FRect rects[], c_color colors[], SDL_Renderer *p_sdl_renderer) {
+void render_characters(size_t *p_entityCount, Healths* healths, SDL_FRect rects[], c_color colors[], SDL_Renderer *p_sdl_renderer) {
 	SDL_FRect health_background = {
 		.x = 0,
 		.y = 0,
@@ -215,7 +287,8 @@ void render_characters(size_t *p_entityCount, c_health healths[], SDL_FRect rect
 	for(size_t i = 0; i < *p_entityCount; i++) {
 		SDL_SetRenderDrawColor(p_sdl_renderer, colors[i].red, colors[i].green, colors[i].blue, SDL_ALPHA_OPAQUE);
 		SDL_RenderFillRect(p_sdl_renderer, &rects[i]);
-		if(healths[i] != -1) {
+		c_health* pHealth = get_Healths(healths, i);
+		if(pHealth != NULL) {
 			float health_x = rects[i].x - (health_background.w / 2) + (rects[i].w / 2);
 			float health_y = rects[i].y - 30;
 
@@ -223,7 +296,7 @@ void render_characters(size_t *p_entityCount, c_health healths[], SDL_FRect rect
 			health_background.y = health_y;
 			health_foreground.x = health_x;
 			health_foreground.y = health_y - (health_background.h / 2);
-			health_foreground.w = ((float)healths[i] / MAX_HEALTH ) * health_background.w;
+			health_foreground.w = ((float)*pHealth / MAX_HEALTH ) * health_background.w;
 			// Render Red Bar Background
 			SDL_SetRenderDrawColor(p_sdl_renderer, 255, 0, 0, SDL_ALPHA_OPAQUE);
 			SDL_RenderFillRect(p_sdl_renderer, &health_background);
@@ -245,9 +318,19 @@ int main() {
 
 	size_t entityCount = 0;
 
-	SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_EVENTS);
+	if (!SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
+		SDL_Log("Couldn't initialize SDL: %s", SDL_GetError());
+		return SDL_APP_FAILURE;
+	}
 
+	SDL_SetAppMetadata("Example Audio Load Wave", "1.0", "com.example.audio-load-wav");
 
+	// Audio setup
+	audio_device = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, NULL);
+	if (audio_device == 0) {
+		SDL_Log("Failed to open audio device: %s", SDL_GetError());
+		return SDL_APP_FAILURE;
+	}
 
 	SDL_Rect displayBounds;
 	SDL_DisplayID primaryDisplayId = SDL_GetPrimaryDisplay();
@@ -290,15 +373,20 @@ int main() {
 	SDL_FRect rects[MAX_ENTITY_COUNT] = {};
 	c_color colors[MAX_ENTITY_COUNT] = {};
 	bool player_controlled[MAX_ENTITY_COUNT] = {};
-	c_health healths[MAX_ENTITY_COUNT] = {};
 	// components_v2
 	Oxygenators oxygenators = {0};
+	Sounds sounds = {0};
+	Healths healths = {0};
 
-	init(&displayBounds, &entityCount, &oxygenators, rects, colors, healths, player_controlled);
+	init(&displayBounds, &entityCount, &oxygenators, rects, colors, &healths, player_controlled, &sounds);
 	enum GameState game_state = RUNNING;
 	printf("ENTITY COUNT: %zu\n", entityCount);
 
-	bool player_left = false;
+	add_Sounds(&sounds, entityCount, (c_sound){ fname: "background-music.wav", repeat: true });
+	if (!init_sound(&sounds.data[entityCount])) {
+		SDL_Log("Failed to initialize sound: %s", SDL_GetError());
+	}
+
 	bool player_right = false;
 	bool player_up = false;
 	bool player_down = false;
@@ -328,7 +416,7 @@ int main() {
 
 
 		SDL_SetRenderScale(p_sdl_renderer, 1.0, 1.0);
-		render_characters(&entityCount, healths, rects, colors, p_sdl_renderer);
+		render_characters(&entityCount, &healths, rects, colors, p_sdl_renderer);
 
 		/* Center the text and scale it up */
 		SDL_GetRenderOutputSize(p_sdl_renderer, &w, &h);
@@ -339,12 +427,13 @@ int main() {
 		//SDL_RenderTexture(p_sdl_renderer, texture, NULL, &dst);
 		SDL_SetRenderScale(p_sdl_renderer, 1.0, 1.0);
 
+		sys_sound(&sounds);
 
 		switch(game_state) {
 
 			case RUNNING: {
 					      update_player(&time_since_last_tick, &entityCount, player_controlled, rects, player_left, player_right, player_up, player_down);
-					      sys_health_oxygenator_boundingBox(&time_since_last_tick, &entityCount, healths, &oxygenators, rects);
+					      sys_health_oxygenator_boundingBox(&time_since_last_tick, &entityCount, &healths, &oxygenators, rects, &sounds);
 
 					      SDL_Event event;
 					      while(SDL_PollEvent(&event)) {
