@@ -54,7 +54,15 @@ typedef struct c_color {
 } c_color;
 typedef bool c_oxygenator;
 typedef float c_health;
-// TODO: this should be refactored to not directly depend on the SDL_FRect... especially since we will eventually be drawing polygons.
+typedef struct c_dimension {
+	float width;
+	float height;
+} c_dimension;
+typedef struct c_position {
+	float x;
+	float y;
+} c_position;
+// DEPRECATED: use c_position + c_dimension
 typedef SDL_FRect c_boundingBox;
 typedef struct c_sound {
 	const char* fname;
@@ -65,8 +73,11 @@ typedef struct c_sound {
 	bool played;
 } c_sound;
 
-COMPONENT(Oxygenators, c_oxygenator)
+COMPONENT(Colors, c_color)
+COMPONENT(Dimensions, c_dimension)
 COMPONENT(Healths, c_health)
+COMPONENT(Oxygenators, c_oxygenator)
+COMPONENT(Positions, c_position)
 COMPONENT(Sounds, c_sound)
 
 // =======================================================================================
@@ -186,14 +197,14 @@ void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, SDL_FRect rect
 		size_t entity = (*p_entityCount);
 		rects[entity] = (SDL_FRect) {
 			.x = rand() / (RAND_MAX / (p_rect_spawn_bounds->w - character_width + 1)) + p_rect_spawn_bounds->x,
-				.y = rand() / (RAND_MAX / (p_rect_spawn_bounds->h - character_height + 1)) + p_rect_spawn_bounds->y,
-				.w = character_width,
-				.h = character_height,
+			.y = rand() / (RAND_MAX / (p_rect_spawn_bounds->h - character_height + 1)) + p_rect_spawn_bounds->y,
+			.w = character_width,
+			.h = character_height,
 		};
 		colors[entity] = (c_color) {
 			.red = 255,
-				.green = 255,
-				.blue = 0,
+			.green = 255,
+			.blue = 0,
 		};
 		add_Healths(healths, entity, MAX_HEALTH);
 		printf("<CHARACTER_SPAWNED> %zu", *p_entityCount);
@@ -206,6 +217,26 @@ void spawn_player(size_t *p_entityCount, bool player_controlled[], SDL_FRect rec
 	player_controlled[*p_entityCount] = true;
 	spawn_characters(1, p_entityCount, rects, colors, healths, p_rect_spawn_bounds);
 	printf("<PLAYER SPAWNED>%s\n", player_controlled[*p_entityCount] ? "true" : "false");
+}
+
+void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, SDL_FRect *p_rect_spawn_bounds) {
+	uint32_t width = 20;
+	uint32_t height = 40;
+	for(uint32_t i = 0; i < spawn_count; i++) {
+		Entity entity = *p_entity_count;
+		add_Positions(positions, entity, (c_position) {
+			.x = rand() / (RAND_MAX / (p_rect_spawn_bounds->w - width + 1)) + p_rect_spawn_bounds->x,
+			.y = rand() / (RAND_MAX / (p_rect_spawn_bounds->h - height + 1)) + p_rect_spawn_bounds->y,
+		});
+		add_Dimensions(dimensions, entity, (c_dimension) { .width = width, height = height });
+		add_Colors(colors, entity, (c_color) {
+			.red = 255,
+			.green = 125,
+			.blue = 0,
+		});
+		printf("<O2_TANK_SPAWNED> %zu", *p_entity_count);
+		(*p_entity_count)++;
+	}
 }
 
 void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, SDL_FRect rects[], c_color colors[], SDL_Rect *p_display_bounds) {
@@ -230,7 +261,7 @@ void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, SDL_FRect rect
 	printfFRect(p_house_rect);
 }
 
-void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, SDL_FRect rects[], c_color colors[], Healths* healths, bool player_controlled[], Sounds* sounds) {
+void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, SDL_FRect rects[], c_color colors[], Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors2) {
 	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
 		healths->entities[i] = -1;
 		healths->data[i] = -1;
@@ -243,6 +274,7 @@ void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygen
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
 	spawn_characters(10, p_entityCount, rects, colors, healths, &character_spawn_bounds);
 	spawn_player(p_entityCount, player_controlled, rects, colors, healths, &character_spawn_bounds);
+	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors2, &character_spawn_bounds);
 }
 
 void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], bool left, bool right, bool up, bool down) {
@@ -267,6 +299,25 @@ void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool pla
 				p_player_rect->y += delta;
 			}
 		}
+	}
+}
+
+void sys_position_dimension_color(Positions* positions, Dimensions* dimensions, Colors* colors, SDL_Renderer *p_sdl_renderer) {
+	for(size_t i = 0; i < colors->count; i++) {
+		Entity e = colors->entities[i];
+		c_position* p_position = get_Positions(positions, e);
+		c_dimension* p_dimension = get_Dimensions(dimensions, e);
+		c_color* p_color = get_Colors(colors, e);
+		if (p_position == NULL || p_color == NULL || p_dimension == NULL)
+			continue;
+
+		SDL_SetRenderDrawColor(p_sdl_renderer, p_color->red, p_color->green, p_color->blue, SDL_ALPHA_OPAQUE);
+		SDL_RenderFillRect(p_sdl_renderer, &(SDL_FRect) {
+			.x = p_position->x,
+			.y = p_position->y,
+			.w = p_dimension->width,
+			.h = p_dimension->height
+		});
 	}
 }
 
@@ -375,10 +426,13 @@ int main() {
 	bool player_controlled[MAX_ENTITY_COUNT] = {};
 	// components_v2
 	Oxygenators oxygenators = {0};
+	Dimensions dimensions = {0};
+	Positions positions = {0};
+	Colors colors2 = {0};
 	Sounds sounds = {0};
 	Healths healths = {0};
 
-	init(&displayBounds, &entityCount, &oxygenators, rects, colors, &healths, player_controlled, &sounds);
+	init(&displayBounds, &entityCount, &oxygenators, rects, colors, &healths, player_controlled, &sounds, &positions, &dimensions, &colors2);
 	enum GameState game_state = RUNNING;
 	printf("ENTITY COUNT: %zu\n", entityCount);
 
@@ -418,6 +472,8 @@ int main() {
 
 
 		SDL_SetRenderScale(p_sdl_renderer, 1.0, 1.0);
+		sys_position_dimension_color(&positions, &dimensions, &colors2, p_sdl_renderer);
+		// DEPRECATED: use sys_position_dimension_color instead.
 		render_characters(&entityCount, &healths, rects, colors, p_sdl_renderer);
 
 		/* Center the text and scale it up */
@@ -571,6 +627,7 @@ int main() {
 		char* entityCountStr = malloc(entityCountLength + 1);
 		snprintf(entityCountStr, entityCountLength + 1, "ENTITY_COUNT: %zu", entityCount);
 
+		SDL_SetRenderDrawColor(p_sdl_renderer, 255, 0, 255, SDL_ALPHA_OPAQUE);
 		SDL_RenderDebugText(p_sdl_renderer, 10, 10, str);
 		SDL_RenderDebugText(p_sdl_renderer, 10, 20, entityCountStr);
 		SDL_RenderPresent(p_sdl_renderer);
