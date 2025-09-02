@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <assert.h>
 
 #include "ecs.h"
 
@@ -72,8 +73,14 @@ typedef struct c_sound {
 	bool repeat;
 	bool played;
 } c_sound;
+typedef bool c_containable;
+typedef bool c_container;
 
 COMPONENT(Colors, c_color)
+// TODO: Understand the unnecesarry overhead of using the ecs macro for
+// these simple bool-type flags vs just an array of entity pointers
+COMPONENT(Containables, c_containable)
+COMPONENT(Containers, c_container)
 COMPONENT(Dimensions, c_dimension)
 COMPONENT(Healths, c_health)
 COMPONENT(Oxygenators, c_oxygenator)
@@ -88,6 +95,9 @@ COMPONENT(Sounds, c_sound)
 //  `sys_<component_a>_<component_b>_...(entityCount, component_a[], component_b[])`
 //  where the system is named based on the data components required to operate the system,
 //  ideally in the same order as the parameters.
+//
+// TODO: there is probably some sort of optimization sampling I can add to every system
+// To make sure the component with the lowest count is always checked first.
 
 static bool init_sound(c_sound* sound) {
 	bool result = false;
@@ -113,6 +123,17 @@ static bool init_sound(c_sound* sound) {
 	return result;
 }
 
+bool overlaps_pos_dim(c_position* p_position_a, c_dimension* p_dimension_a, c_position* p_position_b, c_dimension* p_dimension_b) {
+	bool result = (
+			(p_position_a->x+p_dimension_a->width < p_position_b->x) ||
+			(p_position_b->x+p_dimension_b->width < p_position_a->x) ||
+			(p_position_a->y+p_dimension_a->height < p_position_b->y) ||
+			(p_position_b->y+p_dimension_b->height < p_position_a->y)
+		      );
+	return !result;
+}
+
+// DEPRECATED: use overlaps_pos_dim instead
 bool overlaps(c_boundingBox *pBoundingBoxA, c_boundingBox *pBoundingBoxB) {
 	bool result = (
 			(pBoundingBoxA->x+pBoundingBoxA->w < pBoundingBoxB->x) ||
@@ -140,36 +161,33 @@ void sys_sound(Sounds* sounds) {
 	}
 }
 
-void sys_health_oxygenator_boundingBox(long *p_time_since_last_tick, size_t *pEntityCount, Healths* healths, Oxygenators* oxygenators, c_boundingBox boundingBoxes[], Sounds* sounds) {
+void sys_health_oxygenator_position_dimension_sound(long *p_time_since_last_tick, size_t *pEntityCount, Healths* healths, Oxygenators* oxygenators, Positions* positions, Dimensions* dimensions, Sounds* sounds) {
 	const float O2_RECOVERY_RATE_PER_SECOND = 5;
 	const float O2_RECOVERY_RATE_PER_NANOSECOND = O2_RECOVERY_RATE_PER_SECOND / NANO_SECONDS_PER_SECOND;
 	float delta = (*p_time_since_last_tick) * O2_RECOVERY_RATE_PER_NANOSECOND;
 	
 	for(size_t j = 0; j < oxygenators->count; j++) {
 		Entity oxygenator_entity = oxygenators->entities[j];
-		c_oxygenator *pOxygenator = &oxygenators->data[j];				
 		bool o2_x_health = false;
 		for(size_t i = 0; i < healths->count; i++) {
 			Entity health_entity = healths->entities[i];
-			c_health *pHealth = &healths->data[i];
-			c_boundingBox *pBoundingBoxA = &boundingBoxes[health_entity];
-			bool boundingBoxWithHealth = (*pHealth != -1 && pBoundingBoxA != NULL);
-			if(boundingBoxWithHealth) {
+			c_health *p_health = &healths->data[i];
+			c_position* p_position_a = get_Positions(positions, health_entity);
+			c_dimension* p_dimension_a = get_Dimensions(dimensions, health_entity);
+			bool bounding_box_with_health = (p_health != NULL && p_position_a != NULL && p_dimension_a);
+			if(bounding_box_with_health) {
 				bool oxygenatorAndHealthOverlap = false;
-				// TODO: consider removing this.. I don't know why I would care about blocking this case.
-				if(health_entity == oxygenator_entity) {
-					continue;
-				}
-				c_boundingBox *pBoundingBoxB = &boundingBoxes[oxygenator_entity];
-				bool oxygenatorWithBoundingBox = (pOxygenator != NULL && *pOxygenator && pBoundingBoxB != NULL);
-				if(oxygenatorWithBoundingBox) {
-					oxygenatorAndHealthOverlap = overlaps(pBoundingBoxA, pBoundingBoxB);
+				c_position* p_position_b = get_Positions(positions, oxygenator_entity);
+				c_dimension* p_dimension_b = get_Dimensions(dimensions, oxygenator_entity);
+				bool bounding_box_with_oxygenator = (p_position_b != NULL && p_dimension_b);
+				if(bounding_box_with_oxygenator) {
+					oxygenatorAndHealthOverlap = overlaps_pos_dim(p_position_a, p_dimension_a, p_position_b, p_dimension_b);
 					if(oxygenatorAndHealthOverlap) {
 						o2_x_health = true;	
-						*pHealth = min(MAX_HEALTH, *pHealth+delta);
+						*p_health = min(MAX_HEALTH, *p_health+delta);
 						break;
 					} else {
-						*pHealth = max(0, *pHealth-delta);
+						*p_health = max(0, *p_health-delta);
 					}
 				}
 			}
@@ -190,36 +208,41 @@ void sys_health_oxygenator_boundingBox(long *p_time_since_last_tick, size_t *pEn
 	}
 }
 
-void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, SDL_FRect rects[], c_color colors[], Healths* healths, SDL_FRect *p_rect_spawn_bounds) {
+void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Colors* colors, SDL_FRect *p_rect_spawn_bounds) {
 	uint32_t character_width = 50;
 	uint32_t character_height = 50;
 	for(int i = 0; i < spawnCount; i++) {
 		size_t entity = (*p_entityCount);
-		rects[entity] = (SDL_FRect) {
+
+		c_position position = (c_position) {
 			.x = rand() / (RAND_MAX / (p_rect_spawn_bounds->w - character_width + 1)) + p_rect_spawn_bounds->x,
 			.y = rand() / (RAND_MAX / (p_rect_spawn_bounds->h - character_height + 1)) + p_rect_spawn_bounds->y,
-			.w = character_width,
-			.h = character_height,
 		};
-		colors[entity] = (c_color) {
+		c_dimension dimension = (c_dimension) {
+			.width = character_width,
+			.height = character_height,
+		};
+		add_Positions(positions, entity, position);
+		add_Dimensions(dimensions, entity, dimension);
+		add_Colors(colors, entity, (c_color) {
 			.red = 255,
 			.green = 255,
 			.blue = 0,
-		};
+		});
 		add_Healths(healths, entity, MAX_HEALTH);
+		add_Containers(containers, entity, true);
 		printf("<CHARACTER_SPAWNED> %zu", *p_entityCount);
 		(*p_entityCount)++;
-		printfFRect(&rects[entity]);
 	}
 }
 
-void spawn_player(size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], c_color colors[], Healths* healths, SDL_FRect *p_rect_spawn_bounds) {
+void spawn_player(size_t *p_entityCount, bool player_controlled[], Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Colors* colors, SDL_FRect *p_rect_spawn_bounds) {
 	player_controlled[*p_entityCount] = true;
-	spawn_characters(1, p_entityCount, rects, colors, healths, p_rect_spawn_bounds);
+	spawn_characters(1, p_entityCount, healths, containers, positions, dimensions, colors, p_rect_spawn_bounds);
 	printf("<PLAYER SPAWNED>%s\n", player_controlled[*p_entityCount] ? "true" : "false");
 }
 
-void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, SDL_FRect *p_rect_spawn_bounds) {
+void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, SDL_FRect *p_rect_spawn_bounds) {
 	uint32_t width = 20;
 	uint32_t height = 40;
 	for(uint32_t i = 0; i < spawn_count; i++) {
@@ -234,34 +257,34 @@ void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* pos
 			.green = 125,
 			.blue = 0,
 		});
-		printf("<O2_TANK_SPAWNED> %zu", *p_entity_count);
+		add_Containables(containables, entity, true);
+		printf("<O2_TANK_SPAWNED> %zu\n", *p_entity_count);
 		(*p_entity_count)++;
 	}
 }
 
-void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, SDL_FRect rects[], c_color colors[], SDL_Rect *p_display_bounds) {
+void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* positions, Dimensions* dimensions, Colors* colors, SDL_Rect *p_display_bounds) {
 	const uint32_t HOUSE_WIDTH = 300;
 	const uint32_t HOUSE_HEIGHT = 300;
 	add_Oxygenators(oxygenators, *p_entityCount, true);
-	SDL_FRect *p_house_rect = &rects[*p_entityCount];
-	*p_house_rect = (SDL_FRect) {
-		.w = HOUSE_WIDTH,
-			.h = HOUSE_HEIGHT,
-			.x = (p_display_bounds->w / 2) - (HOUSE_WIDTH / 2),
-			.y = (p_display_bounds->h / 2) - (HOUSE_HEIGHT / 2),
-	};
-	c_color *p_house_color = &colors[*p_entityCount];
-	*p_house_color = (c_color) {
+	add_Positions(positions, *p_entityCount, (c_position) {
+		.x = (p_display_bounds->w / 2) - (HOUSE_WIDTH / 2),
+		.y = (p_display_bounds->h / 2) - (HOUSE_HEIGHT / 2),
+	});
+	add_Dimensions(dimensions, *p_entityCount, (c_dimension) {
+		.width = HOUSE_WIDTH,
+		.height = HOUSE_HEIGHT,
+	});
+	add_Colors(colors, *p_entityCount, (c_color) {
 		.red = 100,
-			.green = 100,
-			.blue = 100
-	};
+		.green = 100,
+		.blue = 100
+	});
 	printf("<HOUSE_SPAWNED> %zu", *p_entityCount);
 	(*p_entityCount)++;
-	printfFRect(p_house_rect);
 }
 
-void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, SDL_FRect rects[], c_color colors[], Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors2) {
+void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers) {
 	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
 		healths->entities[i] = -1;
 		healths->data[i] = -1;
@@ -269,15 +292,15 @@ void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygen
 		sounds->entities[i] = -1;
 		sounds->entity_index[i] = -1;
 	}
-	spawn_house(p_entityCount, oxygenators, rects, colors, p_display_bounds);
+	spawn_house(p_entityCount, oxygenators, positions, dimensions, colors, p_display_bounds);
 	SDL_FRect character_spawn_bounds;
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
-	spawn_characters(10, p_entityCount, rects, colors, healths, &character_spawn_bounds);
-	spawn_player(p_entityCount, player_controlled, rects, colors, healths, &character_spawn_bounds);
-	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors2, &character_spawn_bounds);
+	spawn_characters(10, p_entityCount, healths, containers, positions, dimensions, colors, &character_spawn_bounds);
+	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, colors, &character_spawn_bounds);
+	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors, containables, &character_spawn_bounds);
 }
 
-void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], SDL_FRect rects[], bool left, bool right, bool up, bool down) {
+void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], Positions* positions, bool left, bool right, bool up, bool down) {
 	float pixels_per_foot = 50.0f;
 	float fps = 10.0f;
 	float fpns = fps / NANO_SECONDS_PER_SECOND;
@@ -285,20 +308,103 @@ void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool pla
 
 	for(size_t i = 0; i < *p_entityCount; i++) {
 		if(player_controlled[i] == true) {
-			SDL_FRect *p_player_rect = &rects[i];
+			c_position* p_position = get_Positions(positions, i);
+			assert(p_position != NULL);
+
 			if(left) {
-				p_player_rect->x -= delta;
+				p_position->x -= delta;
 			}
 			if(right) {
-				p_player_rect->x += delta;
+				p_position->x += delta;
 			}
 			if(up) {
-				p_player_rect->y -= delta;
+				p_position->y -= delta;
 			}
 			if(down) {
-				p_player_rect->y += delta;
+				p_position->y += delta;
 			}
 		}
+	}
+}
+
+void sys_containables_container_position_dimension_sound(Containables* containables, Containers* containers, Positions* positions, Dimensions* dimensions, Sounds* sounds) {
+	for(uint32_t i = 0; i < containers->count; i++) {
+		Entity container_entity = containers->entities[i];
+		c_container* p_container = &containers->data[i];
+		c_position* p_container_position = get_Positions(positions, container_entity);
+		c_dimension* p_container_dimension = get_Dimensions(dimensions, container_entity);
+
+		bool physical_container = 
+			p_container != NULL && 
+			p_container_position != NULL &&
+			p_container_dimension != NULL;
+		if (!physical_container)
+			continue;
+
+		for(uint32_t j = 0; j < containables->count; j++) {
+			Entity containable_entity = containables->entities[j];
+			c_containable* p_containable = get_Containables(containables, containable_entity);
+			c_position* p_containable_position = get_Positions(positions, containable_entity);
+			c_dimension* p_containable_dimension = get_Dimensions(dimensions, containable_entity);
+			bool physical_containable = 
+				p_containable != NULL && 
+				p_containable_position != NULL &&
+				p_containable_dimension != NULL;
+			if (!physical_containable)
+				continue;
+
+			if (overlaps_pos_dim(p_containable_position, p_containable_dimension, p_container_position, p_container_dimension)) {
+				remove_Positions(positions, containable_entity);
+				remove_Dimensions(dimensions, containable_entity);
+				remove_Containables(containables, containable_entity);
+				add_Sounds(sounds, container_entity, (c_sound){ fname: "pick-up.wav", repeat: false });
+				c_sound* p_sound = get_Sounds(sounds, container_entity);
+				if (!init_sound(p_sound)) {
+					SDL_Log("Failed to initialize sound: %s", SDL_GetError());
+				}
+			}
+		}
+	}
+}
+
+void sys_health_dimension_position(Healths* healths, Positions* positions, Dimensions* dimensions, SDL_Renderer *p_sdl_renderer) {
+	SDL_FRect health_background = {
+		.x = 0,
+		.y = 0,
+		.w = 80,
+		.h = 10
+	};
+	SDL_FRect health_foreground = {
+		.x = 0,
+		.y = 0,
+		.w = 80,
+		.h = 20
+	};
+
+	for(size_t i = 0; i < healths->count; i++) {
+		Entity e = healths->entities[i];
+		c_health* p_health = &healths->data[i];
+		c_position* p_position = get_Positions(positions, e);
+		c_dimension* p_dimension = get_Dimensions(dimensions, e);
+		bool not_renderable = p_position == NULL || p_dimension == NULL;
+		if (not_renderable) {
+			continue;
+		}
+
+		float health_x = p_position->x - (health_background.w / 2) + (p_dimension->width / 2);
+		float health_y = p_position->y - 30;
+
+		health_background.x = health_x;
+		health_background.y = health_y;
+		health_foreground.x = health_x;
+		health_foreground.y = health_y - (health_background.h / 2);
+		health_foreground.w = ((float)*p_health / MAX_HEALTH ) * health_background.w;
+		// Render Red Bar Background
+		SDL_SetRenderDrawColor(p_sdl_renderer, 255, 0, 0, SDL_ALPHA_OPAQUE);
+		SDL_RenderFillRect(p_sdl_renderer, &health_background);
+		// Render Green Bar Background
+		SDL_SetRenderDrawColor(p_sdl_renderer, 0, 255, 0, 100);
+		SDL_RenderFillRect(p_sdl_renderer, &health_foreground);
 	}
 }
 
@@ -318,43 +424,6 @@ void sys_position_dimension_color(Positions* positions, Dimensions* dimensions, 
 			.w = p_dimension->width,
 			.h = p_dimension->height
 		});
-	}
-}
-
-void render_characters(size_t *p_entityCount, Healths* healths, SDL_FRect rects[], c_color colors[], SDL_Renderer *p_sdl_renderer) {
-	SDL_FRect health_background = {
-		.x = 0,
-		.y = 0,
-		.w = 80,
-		.h = 10
-	};
-	SDL_FRect health_foreground = {
-		.x = 0,
-		.y = 0,
-		.w = 80,
-		.h = 20
-	};
-
-	for(size_t i = 0; i < *p_entityCount; i++) {
-		SDL_SetRenderDrawColor(p_sdl_renderer, colors[i].red, colors[i].green, colors[i].blue, SDL_ALPHA_OPAQUE);
-		SDL_RenderFillRect(p_sdl_renderer, &rects[i]);
-		c_health* pHealth = get_Healths(healths, i);
-		if(pHealth != NULL) {
-			float health_x = rects[i].x - (health_background.w / 2) + (rects[i].w / 2);
-			float health_y = rects[i].y - 30;
-
-			health_background.x = health_x;
-			health_background.y = health_y;
-			health_foreground.x = health_x;
-			health_foreground.y = health_y - (health_background.h / 2);
-			health_foreground.w = ((float)*pHealth / MAX_HEALTH ) * health_background.w;
-			// Render Red Bar Background
-			SDL_SetRenderDrawColor(p_sdl_renderer, 255, 0, 0, SDL_ALPHA_OPAQUE);
-			SDL_RenderFillRect(p_sdl_renderer, &health_background);
-			// Render Green Bar Background
-			SDL_SetRenderDrawColor(p_sdl_renderer, 0, 255, 0, 100);
-			SDL_RenderFillRect(p_sdl_renderer, &health_foreground);
-		}
 	}
 }
 
@@ -421,20 +490,19 @@ int main() {
 	}
 
 	// components
-	SDL_FRect rects[MAX_ENTITY_COUNT] = {};
-	c_color colors[MAX_ENTITY_COUNT] = {};
 	bool player_controlled[MAX_ENTITY_COUNT] = {};
 	// components_v2
-	Oxygenators oxygenators = {0};
+	Containables containables = {0};
+	Containers containers = {0};
+	Colors colors = {0};
 	Dimensions dimensions = {0};
-	Positions positions = {0};
-	Colors colors2 = {0};
-	Sounds sounds = {0};
 	Healths healths = {0};
+	Oxygenators oxygenators = {0};
+	Positions positions = {0};
+	Sounds sounds = {0};
 
-	init(&displayBounds, &entityCount, &oxygenators, rects, colors, &healths, player_controlled, &sounds, &positions, &dimensions, &colors2);
+	init(&displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers);
 	enum GameState game_state = RUNNING;
-	printf("ENTITY COUNT: %zu\n", entityCount);
 
 	add_Sounds(&sounds, entityCount, (c_sound){ fname: "background-music.wav", repeat: true });
 	c_sound* background_sound = get_Sounds(&sounds, entityCount);
@@ -472,9 +540,8 @@ int main() {
 
 
 		SDL_SetRenderScale(p_sdl_renderer, 1.0, 1.0);
-		sys_position_dimension_color(&positions, &dimensions, &colors2, p_sdl_renderer);
-		// DEPRECATED: use sys_position_dimension_color instead.
-		render_characters(&entityCount, &healths, rects, colors, p_sdl_renderer);
+		sys_position_dimension_color(&positions, &dimensions, &colors, p_sdl_renderer);
+		sys_health_dimension_position(&healths, &positions, &dimensions, p_sdl_renderer);
 
 		/* Center the text and scale it up */
 		SDL_GetRenderOutputSize(p_sdl_renderer, &w, &h);
@@ -490,8 +557,9 @@ int main() {
 		switch(game_state) {
 
 			case RUNNING: {
-					      update_player(&time_since_last_tick, &entityCount, player_controlled, rects, player_left, player_right, player_up, player_down);
-					      sys_health_oxygenator_boundingBox(&time_since_last_tick, &entityCount, &healths, &oxygenators, rects, &sounds);
+					      update_player(&time_since_last_tick, &entityCount, player_controlled, &positions, player_left, player_right, player_up, player_down);
+					      sys_health_oxygenator_position_dimension_sound(&time_since_last_tick, &entityCount, &healths, &oxygenators, &positions, &dimensions, &sounds);
+					      sys_containables_container_position_dimension_sound(&containables, &containers, &positions, &dimensions, &sounds);
 
 					      SDL_Event event;
 					      while(SDL_PollEvent(&event)) {
