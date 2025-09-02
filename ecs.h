@@ -6,6 +6,10 @@
 typedef int32_t Entity;
 #define MAX_ENTITY_COUNT 1000
 
+// TODO: Make a static "garbage_bin" of deleted entity Ids that can be reused.
+// Debug assertions should frequently check to ensure that entities are not
+// "leaking" components.
+
 #define COMPONENT(ComponentName, DataType)					\
 typedef struct {								\
 	DataType data[MAX_ENTITY_COUNT];					\
