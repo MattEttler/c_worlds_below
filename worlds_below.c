@@ -74,7 +74,10 @@ typedef struct c_sound {
 	bool played;
 } c_sound;
 typedef bool c_containable;
-typedef bool c_container;
+typedef struct c_container { 
+	Entity containables[10];
+	Entity count;
+} c_container;
 
 COMPONENT(Colors, c_color)
 // TODO: Understand the unnecesarry overhead of using the ecs macro for
@@ -230,7 +233,7 @@ void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, Healths* healt
 			.blue = 0,
 		});
 		add_Healths(healths, entity, MAX_HEALTH);
-		add_Containers(containers, entity, true);
+		add_Containers(containers, entity, (c_container) { .containables = {}, .count = 0 });
 		printf("<CHARACTER_SPAWNED> %zu", *p_entityCount);
 		(*p_entityCount)++;
 	}
@@ -354,13 +357,17 @@ void sys_containables_container_position_dimension_sound(Containables* containab
 				continue;
 
 			if (overlaps_pos_dim(p_containable_position, p_containable_dimension, p_container_position, p_container_dimension)) {
-				remove_Positions(positions, containable_entity);
-				remove_Dimensions(dimensions, containable_entity);
-				remove_Containables(containables, containable_entity);
-				add_Sounds(sounds, container_entity, (c_sound){ fname: "pick-up.wav", repeat: false });
-				c_sound* p_sound = get_Sounds(sounds, container_entity);
-				if (!init_sound(p_sound)) {
-					SDL_Log("Failed to initialize sound: %s", SDL_GetError());
+				bool container_has_space = p_container->count < 10;
+				if (container_has_space) {
+					p_container->containables[p_container->count] = containable_entity;
+					p_container->count++;
+					remove_Positions(positions, containable_entity);
+					remove_Dimensions(dimensions, containable_entity);
+					add_Sounds(sounds, container_entity, (c_sound){ fname: "pick-up.wav", repeat: false });
+					c_sound* p_sound = get_Sounds(sounds, container_entity);
+					if (!init_sound(p_sound)) {
+						SDL_Log("Failed to initialize sound: %s", SDL_GetError());
+					}
 				}
 			}
 		}
