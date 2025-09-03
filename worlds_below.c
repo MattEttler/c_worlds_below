@@ -136,17 +136,6 @@ bool overlaps_pos_dim(c_position* p_position_a, c_dimension* p_dimension_a, c_po
 	return !result;
 }
 
-// DEPRECATED: use overlaps_pos_dim instead
-bool overlaps(c_boundingBox *pBoundingBoxA, c_boundingBox *pBoundingBoxB) {
-	bool result = (
-			(pBoundingBoxA->x+pBoundingBoxA->w < pBoundingBoxB->x) ||
-			(pBoundingBoxB->x+pBoundingBoxB->w < pBoundingBoxA->x) ||
-			(pBoundingBoxA->y+pBoundingBoxA->h < pBoundingBoxB->y) ||
-			(pBoundingBoxB->y+pBoundingBoxB->h < pBoundingBoxA->y)
-		      );
-	return !result;
-}
-
 void sys_sound(Sounds* sounds) {
 	for(size_t i = 0; i < sounds->count; i++) {
 		c_sound* sound = &sounds->data[i];
