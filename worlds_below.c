@@ -78,6 +78,7 @@ typedef struct c_container {
 	Entity containables[10];
 	Entity count;
 } c_container;
+typedef SDL_Texture* c_sprite;
 
 COMPONENT(Colors, c_color)
 // TODO: Understand the unnecesarry overhead of using the ecs macro for
@@ -89,6 +90,10 @@ COMPONENT(Healths, c_health)
 COMPONENT(Oxygenators, c_oxygenator)
 COMPONENT(Positions, c_position)
 COMPONENT(Sounds, c_sound)
+COMPONENT(Sprites, c_sprite)
+
+// Resources: Static assets that may be reused across components/systems
+static c_sprite o2_tank_sprite;
 
 // =======================================================================================
 //  ┌─┐┬ ┬┌─┐┌┬┐┌─┐┌┬┐┌─┐
@@ -101,6 +106,32 @@ COMPONENT(Sounds, c_sound)
 //
 // TODO: there is probably some sort of optimization sampling I can add to every system
 // To make sure the component with the lowest count is always checked first.
+
+static bool init_bmp(const char* fname, SDL_Texture** p_texture, SDL_Renderer* p_sdl_renderer) {
+	char* sprite_path = NULL;
+
+	SDL_asprintf(&sprite_path, "%sresources\\%s", SDL_GetBasePath(), fname);
+	SDL_Surface* p_surface = SDL_LoadBMP(sprite_path);
+
+	if(p_surface == NULL) {
+		SDL_Log("Could not load .bmp file: %s", SDL_GetError());
+		return false;
+	} else {
+		Uint32 colorkey = SDL_MapRGB(SDL_GetPixelFormatDetails(p_surface->format), NULL, 255, 0, 255);
+		SDL_SetSurfaceColorKey(p_surface, true, colorkey);
+		*p_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, p_surface);
+	}
+
+	SDL_DestroySurface(p_surface);
+
+	if (*p_texture == NULL) {
+		SDL_Log("Could not create texture from .bmp file: %s", SDL_GetError());
+		return false;
+	}
+
+	SDL_free(sprite_path);
+	return true;
+}
 
 static bool init_sound(c_sound* sound) {
 	bool result = false;
@@ -234,7 +265,7 @@ void spawn_player(size_t *p_entityCount, bool player_controlled[], Healths* heal
 	printf("<PLAYER SPAWNED>%s\n", player_controlled[*p_entityCount] ? "true" : "false");
 }
 
-void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, SDL_FRect *p_rect_spawn_bounds) {
+void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Sprites* sprites, SDL_FRect *p_rect_spawn_bounds) {
 	uint32_t width = 20;
 	uint32_t height = 40;
 	for(uint32_t i = 0; i < spawn_count; i++) {
@@ -244,12 +275,8 @@ void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* pos
 			.y = rand() / (RAND_MAX / (p_rect_spawn_bounds->h - height + 1)) + p_rect_spawn_bounds->y,
 		});
 		add_Dimensions(dimensions, entity, (c_dimension) { .width = width, height = height });
-		add_Colors(colors, entity, (c_color) {
-			.red = 255,
-			.green = 125,
-			.blue = 0,
-		});
 		add_Containables(containables, entity, true);
+		add_Sprites(sprites, entity, o2_tank_sprite);
 		printf("<O2_TANK_SPAWNED> %zu\n", *p_entity_count);
 		(*p_entity_count)++;
 	}
@@ -276,7 +303,7 @@ void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* pos
 	(*p_entityCount)++;
 }
 
-void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers) {
+void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites) {
 	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
 		healths->entities[i] = -1;
 		healths->data[i] = -1;
@@ -289,7 +316,7 @@ void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygen
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
 	spawn_characters(10, p_entityCount, healths, containers, positions, dimensions, colors, &character_spawn_bounds);
 	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, colors, &character_spawn_bounds);
-	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors, containables, &character_spawn_bounds);
+	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors, containables, sprites, &character_spawn_bounds);
 }
 
 void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], Positions* positions, bool left, bool right, bool up, bool down) {
@@ -404,6 +431,25 @@ void sys_health_dimension_position(Healths* healths, Positions* positions, Dimen
 	}
 }
 
+void sys_position_dimension_sprite(Positions* positions, Dimensions* dimensions, Sprites* sprites, SDL_Renderer *p_sdl_renderer) {
+	for(size_t i = 0; i < sprites->count; i++) {
+		Entity e = sprites->entities[i];
+		c_position* p_position = get_Positions(positions, e);
+		c_dimension* p_dimension = get_Dimensions(dimensions, e);
+		c_sprite* p_sprite = get_Sprites(sprites, e);
+		if (p_position == NULL || p_sprite == NULL || p_dimension == NULL)
+			continue;
+
+		SDL_FRect dst;
+		dst.w = p_dimension->width;
+		dst.h = p_dimension->height;
+		dst.x = p_position->x;
+		dst.y = p_position->y;
+
+		SDL_RenderTexture(p_sdl_renderer, *p_sprite, NULL, &dst);
+	}
+}
+
 void sys_position_dimension_color(Positions* positions, Dimensions* dimensions, Colors* colors, SDL_Renderer *p_sdl_renderer) {
 	for(size_t i = 0; i < colors->count; i++) {
 		Entity e = colors->entities[i];
@@ -496,8 +542,11 @@ int main() {
 	Oxygenators oxygenators = {0};
 	Positions positions = {0};
 	Sounds sounds = {0};
+	Sprites sprites = {0};
 
-	init(&displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers);
+	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
+
+	init(&displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites);
 	enum GameState game_state = RUNNING;
 
 	add_Sounds(&sounds, entityCount, (c_sound){ fname: "background-music.wav", repeat: true });
@@ -537,6 +586,7 @@ int main() {
 
 		SDL_SetRenderScale(p_sdl_renderer, 1.0, 1.0);
 		sys_position_dimension_color(&positions, &dimensions, &colors, p_sdl_renderer);
+		sys_position_dimension_sprite(&positions, &dimensions, &sprites, p_sdl_renderer);
 		sys_health_dimension_position(&healths, &positions, &dimensions, p_sdl_renderer);
 
 		/* Center the text and scale it up */
@@ -545,7 +595,6 @@ int main() {
 		SDL_GetTextureSize(texture, &dst.w, &dst.h);
 		dst.x = ((w / scale) - dst.w) / 2;
 		dst.y = ((h / scale) - dst.h) / 2;
-		//SDL_RenderTexture(p_sdl_renderer, texture, NULL, &dst);
 		SDL_SetRenderScale(p_sdl_renderer, 1.0, 1.0);
 
 		sys_sound(&sounds);
