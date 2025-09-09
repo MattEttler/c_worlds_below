@@ -497,7 +497,7 @@ void sys_health_oxygen_consumer_oxygen_container_container(long* p_time_since_la
 
 			if (p_health == NULL || p_oxygen_container->volume_m3 > 0) continue;
 
-			*p_health -= delta;
+			*p_health = max(*p_health - delta, 0);
 		}
 	}
 }
