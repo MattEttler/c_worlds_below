@@ -486,14 +486,20 @@ void sys_health_oxygen_consumer_oxygen_container_container(long* p_time_since_la
 	for (size_t i = 0; i < oxygen_consumers->count; i++) {
 		Entity oxygen_consumer_entity = oxygen_consumers->entities[i];
 		c_container* p_container = get_Containers(containers, oxygen_consumer_entity);
+		c_health* p_health = get_Healths(healths, oxygen_consumer_entity);
 
+		bool has_o2 = false;
 		for (Entity j = 0; j < p_container->count; j++) {
 			Entity contained_entity = p_container->containables[j];
 			c_oxygen_container* p_oxygen_container = get_OxygenContainers(oxygen_containers, contained_entity);
-			c_health* p_health = get_Healths(healths, oxygen_consumer_entity);
 
-			if (p_health == NULL || p_oxygen_container->volume_m3 > 0) continue;
+			if (p_health == NULL || p_oxygen_container == NULL ) break;
 
+			if (p_oxygen_container->volume_m3 > 0) {
+				has_o2 = true;
+			}
+		}
+		if (!has_o2) {
 			*p_health = max(*p_health - delta, 0);
 		}
 	}
