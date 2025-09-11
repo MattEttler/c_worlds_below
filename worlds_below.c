@@ -256,7 +256,7 @@ void sys_oxygenator_position_dimension_oxygen_container_sound(long* p_time_since
 	}
 }
 
-void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Colors* colors, OxygenConsumers* oxygen_consumers, SDL_FRect *p_rect_spawn_bounds) {
+void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Sprites* sprites, OxygenConsumers* oxygen_consumers, SDL_FRect *p_rect_spawn_bounds) {
 	uint32_t character_width = 50;
 	uint32_t character_height = 50;
 	for(int i = 0; i < spawnCount; i++) {
@@ -272,11 +272,7 @@ void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, Healths* healt
 		};
 		add_Positions(positions, entity, position);
 		add_Dimensions(dimensions, entity, dimension);
-		add_Colors(colors, entity, (c_color) {
-			.red = 255,
-			.green = 255,
-			.blue = 0,
-		});
+		add_Sprites(sprites, entity, aquanaut_sprite);
 		add_Healths(healths, entity, MAX_HEALTH);
 		add_OxygenConsumers(oxygen_consumers, entity, 2.5);
 		add_Containers(containers, entity, (c_container) { .containables = {}, .count = 0 });
@@ -285,9 +281,9 @@ void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, Healths* healt
 	}
 }
 
-void spawn_player(size_t *p_entityCount, bool player_controlled[], Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Colors* colors, OxygenConsumers* oxygen_consumers, SDL_FRect *p_rect_spawn_bounds) {
+void spawn_player(size_t *p_entityCount, bool player_controlled[], Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Sprites* sprites, OxygenConsumers* oxygen_consumers, SDL_FRect *p_rect_spawn_bounds) {
 	player_controlled[*p_entityCount] = true;
-	spawn_characters(1, p_entityCount, healths, containers, positions, dimensions, colors, oxygen_consumers, p_rect_spawn_bounds);
+	spawn_characters(1, p_entityCount, healths, containers, positions, dimensions, sprites, oxygen_consumers, p_rect_spawn_bounds);
 	printf("<PLAYER SPAWNED>%s\n", player_controlled[*p_entityCount] ? "true" : "false");
 }
 
@@ -341,8 +337,8 @@ void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygen
 	spawn_house(p_entityCount, oxygenators, positions, dimensions, colors, p_display_bounds);
 	SDL_FRect character_spawn_bounds;
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
-	spawn_characters(10, p_entityCount, healths, containers, positions, dimensions, colors, oxygen_consumers, &character_spawn_bounds);
-	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, colors, oxygen_consumers, &character_spawn_bounds);
+	spawn_characters(10, p_entityCount, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
+	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
 	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors, containables, sprites, oxygen_containers, &character_spawn_bounds);
 }
 
@@ -459,6 +455,7 @@ void sys_dimension_position_oxygen_consumer_container_oxygen_container(Positions
 				p_oxygen_container->volume_m3 = 0;
 			} else {
 				p_oxygen_container->volume_m3 -= consumption_required;
+				consumption_required = 0;
 			}
 			total_oxygen_capacity += p_oxygen_container->capacity_m3;
 			total_oxygen_volume += p_oxygen_container->volume_m3;
@@ -674,6 +671,7 @@ int main() {
 	Attachments attachments = {0};
 
 	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
+	init_bmp("aquanaut.bmp", &aquanaut_sprite, p_sdl_renderer);
 
 	init(&displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers);
 	enum GameState game_state = RUNNING;
