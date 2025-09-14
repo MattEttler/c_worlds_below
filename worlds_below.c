@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <math.h>
 #include <assert.h>
 
 #include "ecs.h"
@@ -19,6 +20,7 @@ __typeof__ (b) _b = (b); \
 _a > _b ? _a : _b; })
 
 #define CONTAINER_SIZE 10
+#define TWO_PI (2.0f * (float)M_PI)
 
 const int MAX_HEALTH = 100;
 const int MAX_O2 = 100;
@@ -90,6 +92,16 @@ typedef struct c_container {
 	Entity count;
 } c_container;
 typedef SDL_Texture* c_sprite;
+typedef struct c_orbit {
+    float phase;      // radians
+    float freq_hz;    // revs per second
+    float amp_x;      // ellipse radius on X
+    float amp_y;      // ellipse radius on Y
+    float base_x;     // center X
+    float base_y;     // center Y
+    float rot_rad;    // ellipse rotation (0 for axis-aligned)
+    int   inited;     // capture base once if you want
+} c_orbit;
 
 COMPONENT(Colors, c_color)
 // TODO: Understand the unnecesarry overhead of using the ecs macro for
@@ -105,9 +117,11 @@ COMPONENT(Positions, c_position)
 COMPONENT(Sounds, c_sound)
 COMPONENT(Sprites, c_sprite)
 COMPONENT(Attachments, c_attachment)
+COMPONENT(Orbits, c_orbit)
 
 // Resources: Static assets that may be reused across components/systems
 static c_sprite o2_tank_sprite;
+static c_sprite aquanaut_sprite;
 
 // =======================================================================================
 //  ┌─┐┬ ┬┌─┐┌┬┐┌─┐┌┬┐┌─┐
@@ -256,6 +270,35 @@ void sys_oxygenator_position_dimension_oxygen_container_sound(long* p_time_since
 	}
 }
 
+void spawn_orbits(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, Colors* colors, Positions* positions, Dimensions* dimensions, c_dimension* p_spawn_bounds) {
+	for(size_t i = 0; i < spawn_count; i++) {
+		Entity e = *p_entity_count;
+		add_Positions(positions, e, (c_position) { 
+				.x = p_spawn_bounds->width / 2,
+				.y = p_spawn_bounds->height / 2,
+				});
+		add_Dimensions(dimensions, e, (c_dimension) {
+				.width = 50,
+				.height = 50,
+				});
+		add_Colors(colors, e, (c_color) {
+			.red = 50,
+			.green = 50,
+			.blue = 70
+				});
+		add_Orbits(orbits, e, (c_orbit) {
+				.phase = rand() / (RAND_MAX / TWO_PI),      // radians
+				.freq_hz = (double)rand() / (RAND_MAX * 100),    // revs per second
+				.amp_x = p_spawn_bounds->width/2,      // ellipse radius on X
+				.amp_y = p_spawn_bounds->height/2,      // ellipse radius on X
+				.base_x = p_spawn_bounds->width/2,      // ellipse radius on X
+				.base_y = p_spawn_bounds->height/2,      // ellipse radius on X
+				.rot_rad = rand() / (RAND_MAX / TWO_PI),    // ellipse rotation (0 for axis-aligned)
+				});
+		(*p_entity_count)++;
+	}
+}
+
 void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Sprites* sprites, OxygenConsumers* oxygen_consumers, SDL_FRect *p_rect_spawn_bounds) {
 	uint32_t character_width = 50;
 	uint32_t character_height = 50;
@@ -326,7 +369,17 @@ void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* pos
 	(*p_entityCount)++;
 }
 
-void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers) {
+void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits) {
+	spawn_house(p_entityCount, oxygenators, positions, dimensions, colors, p_display_bounds);
+	SDL_FRect character_spawn_bounds;
+	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
+	
+	// TODO: replace SDLF_Rect with this
+	c_dimension spawn_dimensions = (c_dimension) {
+		.width = character_spawn_bounds.w,
+		.height = character_spawn_bounds.h,
+	};
+
 	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
 		healths->entities[i] = -1;
 		healths->data[i] = -1;
@@ -334,12 +387,11 @@ void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygen
 		sounds->entities[i] = -1;
 		sounds->entity_index[i] = -1;
 	}
-	spawn_house(p_entityCount, oxygenators, positions, dimensions, colors, p_display_bounds);
-	SDL_FRect character_spawn_bounds;
-	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
+
 	spawn_characters(10, p_entityCount, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
 	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
 	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors, containables, sprites, oxygen_containers, &character_spawn_bounds);
+	spawn_orbits(10, p_entityCount, orbits, colors, positions, dimensions, &spawn_dimensions);
 }
 
 void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], Positions* positions, bool left, bool right, bool up, bool down) {
@@ -367,6 +419,38 @@ void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool pla
 			}
 		}
 	}
+}
+
+void sys_orbit_position(long* p_time_since_last_tick_ns, Orbits* orbits, Positions* positions) {
+    float delta_time = (float)(*p_time_since_last_tick_ns) / NANO_SECONDS_PER_SECOND; // ns → s
+
+    for (uint32_t i = 0; i < orbits->count; i++) {
+        Entity		orbit_entity = orbits->entities[i];
+        c_orbit*    	p_orbit      = &orbits->data[i];
+        c_position* 	p_position   = get_Positions(positions, orbit_entity);
+        if (p_position == NULL || p_orbit == NULL) continue;
+
+        // advance phase
+        p_orbit->phase += TWO_PI * p_orbit->freq_hz * delta_time;
+        if (p_orbit->phase >= TWO_PI)      p_orbit->phase -= TWO_PI;
+        else if (p_orbit->phase < 0.0f)    p_orbit->phase += TWO_PI;
+
+        // point on axis-aligned ellipse (local space)
+        float phase_cos = cosf(p_orbit->phase);
+        float phase_sin = sinf(p_orbit->phase);
+        float orbit_local_x   = p_orbit->amp_x * phase_cos;
+        float orbit_local_y   = p_orbit->amp_y * phase_sin;
+
+        // rotate ellipse by rot_rad (set rot_rad = 0 for none)
+        float cos_rotation = cosf(p_orbit->rot_rad);
+        float sin_rotation = sinf(p_orbit->rot_rad);
+        float rotated_x =  cos_rotation * orbit_local_x - sin_rotation * orbit_local_y;
+        float rotated_y =  sin_rotation * orbit_local_x + cos_rotation * orbit_local_y;
+
+        // place at anchor
+        p_position->x = p_orbit->base_x + rotated_x;
+        p_position->y = p_orbit->base_y + rotated_y;
+    }
 }
 
 void sys_containables_container_position_dimension_sprite_sound_attachment(Containables* containables, Containers* containers, Positions* positions, Dimensions* dimensions, Sprites* sprites, Sounds* sounds, Attachments* attachments) {
@@ -675,11 +759,12 @@ int main() {
 	Sounds sounds = {0};
 	Sprites sprites = {0};
 	Attachments attachments = {0};
+	Orbits orbits = {0};
 
 	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
 	init_bmp("aquanaut.bmp", &aquanaut_sprite, p_sdl_renderer);
 
-	init(&displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers);
+	init(&displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits);
 	enum GameState game_state = RUNNING;
 
 	add_Sounds(&sounds, entityCount, (c_sound){ fname: "background-music.wav", repeat: true });
@@ -743,6 +828,7 @@ int main() {
 					      sys_oxygenator_position_dimension_oxygen_container_sound(&time_since_last_tick, &oxygenators, &positions, &dimensions, &oxygen_containers, &sounds);
 					      update_player(&time_since_last_tick, &entityCount, player_controlled, &positions, player_left, player_right, player_up, player_down);
 					      sys_containables_container_position_dimension_sprite_sound_attachment(&containables, &containers, &positions, &dimensions, &sprites, &sounds, &attachments);
+					      sys_orbit_position(&time_since_last_tick, &orbits, &positions); 
 
 					      SDL_Event event;
 					      while(SDL_PollEvent(&event)) {
