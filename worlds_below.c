@@ -102,6 +102,15 @@ typedef struct c_orbit {
     float rot_rad;    // ellipse rotation (0 for axis-aligned)
     int   inited;     // capture base once if you want
 } c_orbit;
+typedef struct c_distance_constraint {
+    Entity anchor;      // anchor entity
+    float  min_dist;   // 0 for no minimum
+    float  max_dist;   // <=0 for no maximum
+    float  stiffness;  // 0..1 (1 = hard snap, <1 = partial correction)
+    int    move_both;  // 0 = move self only, 1 = split correction
+    float  inv_mass_self;   // used if move_both==1
+    float  inv_mass_other;  // used if move_both==1
+} c_distance_constraint;
 
 COMPONENT(Colors, c_color)
 // TODO: Understand the unnecesarry overhead of using the ecs macro for
@@ -109,6 +118,7 @@ COMPONENT(Colors, c_color)
 COMPONENT(Containables, c_containable)
 COMPONENT(Containers, c_container)
 COMPONENT(Dimensions, c_dimension)
+COMPONENT(DistanceConstraints, c_distance_constraint)
 COMPONENT(Healths, c_health)
 COMPONENT(Oxygenators, c_oxygenator)
 COMPONENT(OxygenConsumers, c_oxygen_consumer)
@@ -206,6 +216,89 @@ bool overlaps_pos_dim(c_position* p_position_a, c_dimension* p_dimension_a, c_po
 	return !result;
 }
 
+static inline float clampf(float v, float lo, float hi) {
+    return (v < lo) ? lo : (v > hi) ? hi : v;
+}
+
+void sys_distance_constraint_position(DistanceConstraints* constraints, Positions* positions) {
+    for (uint32_t i = 0; i < constraints->count; i++) {
+        Entity self_entity     = constraints->entities[i];
+        c_distance_constraint* c = &constraints->data[i];
+
+        c_position* p_self  = get_Positions(positions, self_entity);
+        c_position* p_other = get_Positions(positions, c->anchor);
+        if (!p_self || !p_other) continue;
+
+        float dx = p_self->x - p_other->x;
+        float dy = p_self->y - p_other->y;
+        float dist_sq = dx*dx + dy*dy;
+
+        // No distance → pick a fallback direction if we need to enforce a positive min_dist.
+        if (dist_sq < 1e-12f) {
+            if (c->min_dist > 0.0f) {
+                float nx = 1.0f, ny = 0.0f; // arbitrary
+                float target = c->min_dist;
+                float sx = nx * target;
+                float sy = ny * target;
+
+                if (!c->move_both) {
+                    p_self->x = p_other->x + sx;
+                    p_self->y = p_other->y + sy;
+                } else {
+                    float w1 = fmaxf(c->inv_mass_self,  0.0f);
+                    float w2 = fmaxf(c->inv_mass_other, 0.0f);
+                    float wsum = w1 + w2;
+                    if (wsum > 0.0f) {
+                        float k1 = w1 / wsum, k2 = w2 / wsum;
+                        p_self->x  = p_self->x  + (sx)*k1;
+                        p_self->y  = p_self->y  + (sy)*k1;
+                        p_other->x = p_other->x - (sx)*k2;
+                        p_other->y = p_other->y - (sy)*k2;
+                    }
+                }
+            }
+            continue;
+        }
+
+        float dist = sqrtf(dist_sq);
+        float nx = dx / dist;
+        float ny = dy / dist;
+
+        // Compute target distance within [min,max]
+        float target = dist;
+        if (c->max_dist > 0.0f) target = fminf(target, c->max_dist);
+        if (c->min_dist > 0.0f) target = fmaxf(target, c->min_dist);
+        if (target == dist) continue; // already satisfied
+
+        // How much to change the distance along the line (positive = too far, negative = too close)
+        float delta = dist - target;
+
+        // Correction vector (scaled by stiffness)
+        float k = (c->stiffness > 0.0f) ? ((c->stiffness <= 1.0f) ? c->stiffness : 1.0f) : 0.0f;
+        float corr_x = delta * nx * k;
+        float corr_y = delta * ny * k;
+
+        if (!c->move_both) {
+            // Move self only: pull/push along the line toward the target distance
+            p_self->x -= corr_x;
+            p_self->y -= corr_y;
+        } else {
+            // Split correction by inverse masses (Position-Based Dynamics style)
+            float w1 = fmaxf(c->inv_mass_self,  0.0f);
+            float w2 = fmaxf(c->inv_mass_other, 0.0f);
+            float wsum = w1 + w2;
+            if (wsum > 0.0f) {
+                float k1 = w1 / wsum;
+                float k2 = w2 / wsum;
+                p_self->x  -= corr_x * k1;
+                p_self->y  -= corr_y * k1;
+                p_other->x += corr_x * k2;
+                p_other->y += corr_y * k2;
+            }
+        }
+    }
+}
+
 void sys_sound(Sounds* sounds) {
 	for(size_t i = 0; i < sounds->count; i++) {
 		c_sound* sound = &sounds->data[i];
@@ -270,23 +363,23 @@ void sys_oxygenator_position_dimension_oxygen_container_sound(long* p_time_since
 	}
 }
 
-void spawn_orbits(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, Colors* colors, Positions* positions, Dimensions* dimensions, c_dimension* p_spawn_bounds) {
+void spawn_sharks(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, Colors* colors, Positions* positions, Dimensions* dimensions, DistanceConstraints* distance_constraints, c_dimension* p_spawn_bounds) {
 	for(size_t i = 0; i < spawn_count; i++) {
-		Entity e = *p_entity_count;
-		add_Positions(positions, e, (c_position) { 
+		Entity segment_1 = *p_entity_count;
+		add_Positions(positions, segment_1, (c_position) { 
 				.x = p_spawn_bounds->width / 2,
 				.y = p_spawn_bounds->height / 2,
 				});
-		add_Dimensions(dimensions, e, (c_dimension) {
+		add_Dimensions(dimensions, segment_1, (c_dimension) {
 				.width = 50,
 				.height = 50,
 				});
-		add_Colors(colors, e, (c_color) {
+		add_Colors(colors, segment_1, (c_color) {
 			.red = 50,
 			.green = 50,
 			.blue = 70
 				});
-		add_Orbits(orbits, e, (c_orbit) {
+		add_Orbits(orbits, segment_1, (c_orbit) {
 				.phase = rand() / (RAND_MAX / TWO_PI),      // radians
 				.freq_hz = (double)rand() / (RAND_MAX * 100),    // revs per second
 				.amp_x = p_spawn_bounds->width/2,      // ellipse radius on X
@@ -296,6 +389,107 @@ void spawn_orbits(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, 
 				.rot_rad = rand() / (RAND_MAX / TWO_PI),    // ellipse rotation (0 for axis-aligned)
 				});
 		(*p_entity_count)++;
+
+		Entity segment_2 = *p_entity_count;
+		add_Positions(positions, segment_2, (c_position) { 
+				.x = p_spawn_bounds->width / 2,
+				.y = p_spawn_bounds->height / 2,
+				});
+		add_Dimensions(dimensions, segment_2, (c_dimension) {
+				.width = 45,
+				.height = 45,
+				});
+		add_Colors(colors, segment_2, (c_color) {
+			.red = 50,
+			.green = 50,
+			.blue = 70
+			});
+		add_DistanceConstraints(distance_constraints, segment_2, (c_distance_constraint) {
+				.anchor = segment_1,
+				.min_dist = 50,   // 0 for no minimum
+				.max_dist = 50,   // <=0 for no maximum
+				.stiffness = .5,  // 0..1 (1 = hard snap, <1 = partial correction)
+				.move_both = false,  // 0 = move self only, 1 = split correction
+				.inv_mass_self = 0,   // used if move_both==1
+				.inv_mass_other = 0  // used if move_both==1
+				});
+		(*p_entity_count)++;
+
+		Entity segment_3 = *p_entity_count;
+		add_Positions(positions, segment_3, (c_position) { 
+				.x = p_spawn_bounds->width / 2,
+				.y = p_spawn_bounds->height / 2,
+				});
+		add_Dimensions(dimensions, segment_3, (c_dimension) {
+				.width = 35,
+				.height = 35,
+				});
+		add_Colors(colors, segment_3, (c_color) {
+			.red = 50,
+			.green = 50,
+			.blue = 70
+			});
+		add_DistanceConstraints(distance_constraints, segment_3, (c_distance_constraint) {
+				.anchor = distance_constrained_entity,
+				.min_dist = 50,   // 0 for no minimum
+				.max_dist = 50,   // <=0 for no maximum
+				.stiffness = .5,  // 0..1 (1 = hard snap, <1 = partial correction)
+				.move_both = false,  // 0 = move self only, 1 = split correction
+				.inv_mass_self = 0,   // used if move_both==1
+				.inv_mass_other = 0  // used if move_both==1
+				});
+		(*p_entity_count)++;
+
+		Entity segment_4 = *p_entity_count;
+		add_Positions(positions, segment_4, (c_position) { 
+				.x = p_spawn_bounds->width / 2,
+				.y = p_spawn_bounds->height / 2,
+				});
+		add_Dimensions(dimensions, segment_4, (c_dimension) {
+				.width = 25,
+				.height = 25,
+				});
+		add_Colors(colors, segment_4, (c_color) {
+				.red = 50,
+				.green = 50,
+				.blue = 70
+				});
+		add_DistanceConstraints(distance_constraints, segment_4, (c_distance_constraint) {
+				.anchor = segment_3,
+				.min_dist = 50,   // 0 for no minimum
+				.max_dist = 50,   // <=0 for no maximum
+				.stiffness = .5,  // 0..1 (1 = hard snap, <1 = partial correction)
+				.move_both = false,  // 0 = move self only, 1 = split correction
+				.inv_mass_self = 0,   // used if move_both==1
+				.inv_mass_other = 0  // used if move_both==1
+				});
+		(*p_entity_count)++;
+
+		Entity segment_5 = *p_entity_count;
+		add_Positions(positions, segment_5, (c_position) { 
+				.x = p_spawn_bounds->width / 2,
+				.y = p_spawn_bounds->height / 2,
+				});
+		add_Dimensions(dimensions, segment_5, (c_dimension) {
+				.width = 20,
+				.height = 20,
+				});
+		add_Colors(colors, segment_5, (c_color) {
+				.red = 50,
+				.green = 50,
+				.blue = 70
+				});
+		add_DistanceConstraints(distance_constraints, segment_5, (c_distance_constraint) {
+				.anchor = segment_4,
+				.min_dist = 50,   // 0 for no minimum
+				.max_dist = 50,   // <=0 for no maximum
+				.stiffness = .5,  // 0..1 (1 = hard snap, <1 = partial correction)
+				.move_both = false,  // 0 = move self only, 1 = split correction
+				.inv_mass_self = 0,   // used if move_both==1
+				.inv_mass_other = 0  // used if move_both==1
+				});
+		(*p_entity_count)++;
+
 	}
 }
 
@@ -369,7 +563,7 @@ void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* pos
 	(*p_entityCount)++;
 }
 
-void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits) {
+void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits, DistanceConstraints* distance_constraints) {
 	spawn_house(p_entityCount, oxygenators, positions, dimensions, colors, p_display_bounds);
 	SDL_FRect character_spawn_bounds;
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
@@ -391,7 +585,7 @@ void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygen
 	spawn_characters(10, p_entityCount, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
 	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
 	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors, containables, sprites, oxygen_containers, &character_spawn_bounds);
-	spawn_orbits(10, p_entityCount, orbits, colors, positions, dimensions, &spawn_dimensions);
+	spawn_sharks(10, p_entityCount, orbits, colors, positions, dimensions, distance_constraints, &spawn_dimensions);
 }
 
 void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], Positions* positions, bool left, bool right, bool up, bool down) {
@@ -760,11 +954,12 @@ int main() {
 	Sprites sprites = {0};
 	Attachments attachments = {0};
 	Orbits orbits = {0};
+	DistanceConstraints distance_constraints = {0};
 
 	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
 	init_bmp("aquanaut.bmp", &aquanaut_sprite, p_sdl_renderer);
 
-	init(&displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits);
+	init(&displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints);
 	enum GameState game_state = RUNNING;
 
 	add_Sounds(&sounds, entityCount, (c_sound){ fname: "background-music.wav", repeat: true });
@@ -829,6 +1024,9 @@ int main() {
 					      update_player(&time_since_last_tick, &entityCount, player_controlled, &positions, player_left, player_right, player_up, player_down);
 					      sys_containables_container_position_dimension_sprite_sound_attachment(&containables, &containers, &positions, &dimensions, &sprites, &sounds, &attachments);
 					      sys_orbit_position(&time_since_last_tick, &orbits, &positions); 
+
+
+					      sys_distance_constraint_position(&distance_constraints, &positions);
 
 					      SDL_Event event;
 					      while(SDL_PollEvent(&event)) {
