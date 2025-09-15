@@ -40,7 +40,7 @@ void printfFRect(SDL_FRect *p_sdl_f_rect) {
 enum GameState {
 	RUNNING,
 	PAUSED,
-	LOST,
+	GAME_OVER,
 	WON
 };
 
@@ -563,7 +563,31 @@ void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* pos
 	(*p_entityCount)++;
 }
 
-void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits, DistanceConstraints* distance_constraints) {
+void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits, DistanceConstraints* distance_constraints) {
+	*p_game_state = RUNNING;
+	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
+		*p_entityCount = 0;
+		oxygenators->count = 0;
+		healths->count = 0;
+		sounds->count = 0;
+		positions->count = 0;
+		dimensions->count = 0;
+		colors->count = 0;
+		containables->count = 0;
+		containers->count = 0;
+		sprites->count = 0;
+		oxygen_consumers->count = 0;
+		oxygen_containers->count = 0;
+		orbits->count = 0;
+		distance_constraints->count = 0;
+	}
+
+	add_Sounds(sounds, *p_entityCount, (c_sound){ fname: "background-music.wav", repeat: true });
+	c_sound* background_sound = get_Sounds(sounds, *p_entityCount);
+	if (!init_sound(background_sound)) {
+		SDL_Log("Failed to initialize sound: %s", SDL_GetError());
+	}
+
 	spawn_house(p_entityCount, oxygenators, positions, dimensions, colors, p_display_bounds);
 	SDL_FRect character_spawn_bounds;
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
@@ -574,30 +598,27 @@ void init(SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygen
 		.height = character_spawn_bounds.h,
 	};
 
-	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
-		healths->entities[i] = -1;
-		healths->data[i] = -1;
-		healths->entity_index[i] = -1;
-		sounds->entities[i] = -1;
-		sounds->entity_index[i] = -1;
-	}
-
 	spawn_characters(10, p_entityCount, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
 	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
 	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors, containables, sprites, oxygen_containers, &character_spawn_bounds);
 	spawn_sharks(10, p_entityCount, orbits, colors, positions, dimensions, distance_constraints, &spawn_dimensions);
 }
 
-void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], Positions* positions, bool left, bool right, bool up, bool down) {
+void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], Positions* positions, Healths* healths, enum GameState* p_game_state, bool left, bool right, bool up, bool down) {
 	float pixels_per_foot = 50.0f;
 	float fps = 10.0f;
 	float fpns = fps / NANO_SECONDS_PER_SECOND;
 	float delta = ((*p_time_since_last_tick) * fpns) * pixels_per_foot;
 
+	bool any_living_players = false;
 	for(size_t i = 0; i < *p_entityCount; i++) {
 		if(player_controlled[i] == true) {
 			c_position* p_position = get_Positions(positions, i);
 			assert(p_position != NULL);
+			c_health* p_health = get_Healths(healths, i);
+			if (p_health != NULL && *p_health > 0) {
+				any_living_players = true;
+			}
 
 			if(left) {
 				p_position->x -= delta;
@@ -613,6 +634,7 @@ void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool pla
 			}
 		}
 	}
+	*p_game_state = any_living_players ? RUNNING : GAME_OVER;
 }
 
 void sys_orbit_position(long* p_time_since_last_tick_ns, Orbits* orbits, Positions* positions) {
@@ -959,14 +981,8 @@ int main() {
 	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
 	init_bmp("aquanaut.bmp", &aquanaut_sprite, p_sdl_renderer);
 
-	init(&displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints);
-	enum GameState game_state = RUNNING;
-
-	add_Sounds(&sounds, entityCount, (c_sound){ fname: "background-music.wav", repeat: true });
-	c_sound* background_sound = get_Sounds(&sounds, entityCount);
-	if (!init_sound(background_sound)) {
-		SDL_Log("Failed to initialize sound: %s", SDL_GetError());
-	}
+	enum GameState game_state;
+	init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints);
 
 	bool player_left = false;
 	bool player_right = false;
@@ -1021,10 +1037,9 @@ int main() {
 					      sys_health_oxygen_consumer_oxygen_container_container(&time_since_last_tick, &healths, &oxygen_consumers, &oxygen_containers, &containers);
 
 					      sys_oxygenator_position_dimension_oxygen_container_sound(&time_since_last_tick, &oxygenators, &positions, &dimensions, &oxygen_containers, &sounds);
-					      update_player(&time_since_last_tick, &entityCount, player_controlled, &positions, player_left, player_right, player_up, player_down);
+					      update_player(&time_since_last_tick, &entityCount, player_controlled, &positions, &healths, &game_state, player_left, player_right, player_up, player_down);
 					      sys_containables_container_position_dimension_sprite_sound_attachment(&containables, &containers, &positions, &dimensions, &sprites, &sounds, &attachments);
 					      sys_orbit_position(&time_since_last_tick, &orbits, &positions); 
-
 
 					      sys_distance_constraint_position(&distance_constraints, &positions);
 
@@ -1126,20 +1141,36 @@ int main() {
 					     }
 					     break;
 				     }
-			case LOST: {
-					   /* Create the text */
-					   SDL_Texture *lost_text_texture = NULL;
-					   SDL_Surface *lost_text;
-					   lost_text = TTF_RenderText_Blended(font, "LOST", 0, color);
-					   if (lost_text) {
-						   lost_text_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, lost_text);
+			case GAME_OVER: {
+					   SDL_Texture *text_texture = NULL;
+					   SDL_Surface *text;
+					   text = TTF_RenderText_Blended(font, "GAME OVER", 0, color);
+					   if (text) {
+						   text_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, text);
 						   SDL_DestroySurface(text);
 					   }
-					   if (!lost_text_texture) {
+					   if (!text_texture) {
 						   SDL_Log("Couldn't create text: %s\n", SDL_GetError());
 						   return SDL_APP_FAILURE;
 					   }
-				   }
+
+					   SDL_GetRenderOutputSize(p_sdl_renderer, &w, &h);
+					   SDL_SetRenderScale(p_sdl_renderer, 20, 20);
+					   SDL_GetTextureSize(text_texture, &dst.w, &dst.h);
+					   dst.x = ((w / 20) - dst.w) / 2;
+					   dst.y = ((h / 20) - dst.h) / 2;
+					   SDL_RenderTexture(p_sdl_renderer, text_texture, NULL, &dst);
+					   SDL_SetRenderScale(p_sdl_renderer, scale, scale);
+
+					   SDL_Event event;
+					   while(SDL_PollEvent(&event)) {
+						   switch(event.type) {
+							   case SDL_EVENT_KEY_DOWN: 
+								   init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints);
+						   }
+					   }
+					   break;
+					}
 			default: { 
 					 printf("WARNING: Unknown GameState detected: %d\n", game_state); 
 					 break;
