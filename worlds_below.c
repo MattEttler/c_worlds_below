@@ -430,7 +430,7 @@ void spawn_sharks(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, 
 			.blue = 70
 			});
 		add_DistanceConstraints(distance_constraints, segment_3, (c_distance_constraint) {
-				.anchor = distance_constrained_entity,
+				.anchor = segment_2,
 				.min_dist = 50,   // 0 for no minimum
 				.max_dist = 50,   // <=0 for no maximum
 				.stiffness = .5,  // 0..1 (1 = hard snap, <1 = partial correction)
