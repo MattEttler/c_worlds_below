@@ -111,6 +111,11 @@ typedef struct c_distance_constraint {
     float  inv_mass_self;   // used if move_both==1
     float  inv_mass_other;  // used if move_both==1
 } c_distance_constraint;
+typedef struct c_damage_collider {
+	float attacks_per_second;
+	float damage_per_attack;
+	float time_since_last_attack;
+} c_damage_collider;
 
 COMPONENT(Colors, c_color)
 // TODO: Understand the unnecesarry overhead of using the ecs macro for
@@ -128,6 +133,7 @@ COMPONENT(Sounds, c_sound)
 COMPONENT(Sprites, c_sprite)
 COMPONENT(Attachments, c_attachment)
 COMPONENT(Orbits, c_orbit)
+COMPONENT(DamageColliders, c_damage_collider)
 
 // Resources: Static assets that may be reused across components/systems
 static c_sprite o2_tank_sprite;
@@ -218,6 +224,46 @@ bool overlaps_pos_dim(c_position* p_position_a, c_dimension* p_dimension_a, c_po
 
 static inline float clampf(float v, float lo, float hi) {
     return (v < lo) ? lo : (v > hi) ? hi : v;
+}
+
+void sys_damage_collider_health_position_dimension_sound(long* p_time_since_last_tick_ns, DamageColliders* damage_colliders, Healths* healths, Positions* positions, Dimensions* dimensions, Sounds* sounds) {
+	float delta_time = (float)(*p_time_since_last_tick_ns) / NANO_SECONDS_PER_SECOND; // ns → s
+											  
+	for (uint32_t i = 0; i < damage_colliders->count; i++) {
+		Entity damage_collider_entity = damage_colliders->entities[i];
+		c_damage_collider* p_damage_collider = &damage_colliders->data[i];
+		c_position* p_damage_collider_position = get_Positions(positions, damage_collider_entity);
+		c_dimension* p_damage_collider_dimension = get_Dimensions(dimensions, damage_collider_entity);
+		if (p_damage_collider_position == NULL || p_damage_collider_dimension == NULL) continue;
+
+		p_damage_collider->time_since_last_attack += delta_time;
+
+		for (uint32_t j = 0; j < healths->count; j++) {
+			Entity health_entity = healths->entities[j];
+			c_position* p_health_position = get_Positions(positions, health_entity);
+			c_health* p_health = get_Healths(healths, health_entity);
+			c_dimension* p_health_dimension = get_Dimensions(dimensions, health_entity);
+			if (p_health_position == NULL || p_health_dimension == NULL) continue;
+
+			if (overlaps_pos_dim(
+						p_health_position, 
+						p_health_dimension, 
+						p_damage_collider_position, 
+						p_damage_collider_dimension
+					    )) {
+				if (p_damage_collider->time_since_last_attack > p_damage_collider->attacks_per_second) {
+					*p_health -= p_damage_collider->damage_per_attack;
+					p_damage_collider->time_since_last_attack = 0;
+
+					add_Sounds(sounds, health_entity, (c_sound){ fname: "scream.wav", repeat: false });
+					c_sound* p_sound = get_Sounds(sounds, health_entity);
+					if (!init_sound(p_sound)) {
+						SDL_Log("Failed to initialize sound: %s", SDL_GetError());
+					}
+				}
+			}
+		}
+	}
 }
 
 void sys_distance_constraint_position(DistanceConstraints* constraints, Positions* positions) {
@@ -363,7 +409,7 @@ void sys_oxygenator_position_dimension_oxygen_container_sound(long* p_time_since
 	}
 }
 
-void spawn_sharks(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, Colors* colors, Positions* positions, Dimensions* dimensions, DistanceConstraints* distance_constraints, c_dimension* p_spawn_bounds) {
+void spawn_sharks(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, Colors* colors, Positions* positions, Dimensions* dimensions, DistanceConstraints* distance_constraints, DamageColliders* damage_colliders, c_dimension* p_spawn_bounds) {
 	for(size_t i = 0; i < spawn_count; i++) {
 		Entity segment_1 = *p_entity_count;
 		add_Positions(positions, segment_1, (c_position) { 
@@ -387,6 +433,11 @@ void spawn_sharks(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, 
 				.base_x = p_spawn_bounds->width/2,      // ellipse radius on X
 				.base_y = p_spawn_bounds->height/2,      // ellipse radius on X
 				.rot_rad = rand() / (RAND_MAX / TWO_PI),    // ellipse rotation (0 for axis-aligned)
+				});
+		add_DamageColliders(damage_colliders, segment_1, (c_damage_collider) {
+				.damage_per_attack = 10.0f,
+				.attacks_per_second = 1.0f,
+				.time_since_last_attack = 0.0f,
 				});
 		(*p_entity_count)++;
 
@@ -563,7 +614,7 @@ void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* pos
 	(*p_entityCount)++;
 }
 
-void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits, DistanceConstraints* distance_constraints) {
+void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits, DistanceConstraints* distance_constraints, DamageColliders* damage_colliders, Attachments* attachments) {
 	*p_game_state = RUNNING;
 	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
 		*p_entityCount = 0;
@@ -580,6 +631,8 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 		oxygen_containers->count = 0;
 		orbits->count = 0;
 		distance_constraints->count = 0;
+		damage_colliders->count = 0;
+		attachments->count = 0;
 	}
 
 	add_Sounds(sounds, *p_entityCount, (c_sound){ fname: "background-music.wav", repeat: true });
@@ -601,7 +654,7 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 	spawn_characters(10, p_entityCount, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
 	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
 	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors, containables, sprites, oxygen_containers, &character_spawn_bounds);
-	spawn_sharks(10, p_entityCount, orbits, colors, positions, dimensions, distance_constraints, &spawn_dimensions);
+	spawn_sharks(10, p_entityCount, orbits, colors, positions, dimensions, distance_constraints, damage_colliders, &spawn_dimensions);
 }
 
 void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], Positions* positions, Healths* healths, enum GameState* p_game_state, bool left, bool right, bool up, bool down) {
@@ -977,12 +1030,13 @@ int main() {
 	Attachments attachments = {0};
 	Orbits orbits = {0};
 	DistanceConstraints distance_constraints = {0};
+	DamageColliders damage_colliders = {0};
 
 	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
 	init_bmp("aquanaut.bmp", &aquanaut_sprite, p_sdl_renderer);
 
 	enum GameState game_state;
-	init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints);
+	init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments);
 
 	bool player_left = false;
 	bool player_right = false;
@@ -1042,6 +1096,8 @@ int main() {
 					      sys_orbit_position(&time_since_last_tick, &orbits, &positions); 
 
 					      sys_distance_constraint_position(&distance_constraints, &positions);
+
+					      sys_damage_collider_health_position_dimension_sound(&time_since_last_tick, &damage_colliders, &healths, &positions, &dimensions, &sounds);
 
 					      SDL_Event event;
 					      while(SDL_PollEvent(&event)) {
@@ -1166,7 +1222,7 @@ int main() {
 					   while(SDL_PollEvent(&event)) {
 						   switch(event.type) {
 							   case SDL_EVENT_KEY_DOWN: 
-								   init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints);
+								   init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments);
 						   }
 					   }
 					   break;
