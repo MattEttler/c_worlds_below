@@ -117,7 +117,12 @@ typedef struct c_damage_collider {
 	float time_since_last_attack;
 } c_damage_collider;
 typedef  struct c_light {
+	uint32_t width;
+	uint32_t height;
 	float brightness;
+	uint8_t red;
+	uint8_t green;
+	uint8_t blue;
 } c_light;
 
 COMPONENT(Colors, c_color)
@@ -220,7 +225,7 @@ void generate_light_sprite(SDL_Texture** p_texture, SDL_Renderer* p_sdl_renderer
             float inverse_radius = 1.0f - normalized_radius;                           // 1 at center → 0 at edge
 
             // slight gamma to soften the outer ring
-            const float gamma = 2.2f;                     
+            const float gamma = 1.5f;                     
             float a_f = powf(inverse_radius, gamma);
             if (a_f < 0.0f) a_f = 0.0f;
             if (a_f > 1.0f) a_f = 1.0f;
@@ -293,8 +298,12 @@ static inline float clampf(float v, float lo, float hi) {
     return (v < lo) ? lo : (v > hi) ? hi : v;
 }
 
-void sys_light_position(long* p_time_since_last_tick_ns, SDL_Renderer* p_sdl_renderer, SDL_Texture* lightmap, Lights* lights, Positions* positions) {
-	uint32_t size = 800;
+void sys_light_position_dimension(long* p_time_since_last_tick_ns, SDL_Renderer* p_sdl_renderer, SDL_Texture* lightmap, Lights* lights, Positions* positions, Dimensions* dimensions) {
+	c_dimension default_dimension = (c_dimension) {
+		.width = 0,
+		.height = 0,
+	};
+
 	SDL_SetRenderTarget(p_sdl_renderer, lightmap);
 
 	    // Clear to ambient brightness (gray)
@@ -307,14 +316,18 @@ void sys_light_position(long* p_time_since_last_tick_ns, SDL_Renderer* p_sdl_ren
 		Entity light_entity = lights->entities[i];
 		c_light* p_light = &lights->data[i];
 		c_position* p_position = get_Positions(positions, light_entity);
+		c_dimension* p_dimension = get_Dimensions(dimensions, light_entity);
+		if (p_position == NULL) continue;
+		if (p_dimension == NULL) p_dimension = &default_dimension;
 
+		SDL_SetTextureColorMod(light_sprite, p_light->red, p_light->green, p_light->blue);
 		SDL_SetTextureAlphaMod(light_sprite, (Uint8)(SDL_clamp(p_light->brightness, 0.0f, 1.0f) * 255));
 
 		SDL_FRect dst;
-		dst.w = size;
-		dst.h = size;
-		dst.x = p_position->x - (size / 2);
-		dst.y = p_position->y - (size / 2);
+		dst.w = p_light->width;
+		dst.h = p_light->height;
+		dst.x = p_position->x - (p_light->width / 2) + (p_dimension->width / 2);
+		dst.y = p_position->y - (p_light->height / 2) + (p_dimension->height / 2);
 
 		SDL_RenderTexture(p_sdl_renderer, light_sprite, NULL, &dst);
 	}
@@ -505,7 +518,7 @@ void sys_oxygenator_position_dimension_oxygen_container_sound(long* p_time_since
 	}
 }
 
-void spawn_lights(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, Lights* lights, Sprites* sprites, c_dimension* p_spawn_dimensions) {
+void spawn_outside_lights(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, Lights* lights, Sprites* sprites, c_dimension* p_spawn_dimensions) {
 	for(size_t i = 0; i < spawn_count; i++) {
 		Entity light_entity = *p_entity_count;
 		add_Positions(positions, light_entity, (c_position) {
@@ -514,15 +527,20 @@ void spawn_lights(uint32_t spawn_count, size_t* p_entity_count, Positions* posit
 				});
 		add_Dimensions(dimensions, light_entity, (c_dimension) {
 				.width = 30,
-				.height = 30,
+				.height = 10,
 				});
 		add_Colors(colors, light_entity, (c_color) {
 				.red = 255,
-				.green = 255,
-				.blue = 255,
+				.green = 0,
+				.blue = 0,
 				});
 		add_Lights(lights, light_entity, (c_light) {
-				.brightness = 10.0f,
+				.width = 400,
+				.height = 400,
+				.brightness = 1.0f,
+				.red = 255,
+				.green = 0,
+				.blue = 0,
 				});
 		*p_entity_count += 1;
 	}
@@ -712,7 +730,7 @@ void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* pos
 	}
 }
 
-void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* positions, Dimensions* dimensions, Colors* colors, SDL_Rect *p_display_bounds) {
+void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* positions, Dimensions* dimensions, Colors* colors, Lights* lights, SDL_Rect *p_display_bounds) {
 	const uint32_t HOUSE_WIDTH = 300;
 	const uint32_t HOUSE_HEIGHT = 300;
 	add_Oxygenators(oxygenators, *p_entityCount, true);
@@ -728,6 +746,14 @@ void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* pos
 		.red = 100,
 		.green = 100,
 		.blue = 100
+	});
+	add_Lights(lights, *p_entityCount, (c_light) {
+		.width = 800,
+		.height = 800,
+		.brightness = 1.0f,
+		.red = 250,
+		.green = 250,
+		.blue = 200,
 	});
 	printf("<HOUSE_SPAWNED> %zu", *p_entityCount);
 	(*p_entityCount)++;
@@ -761,7 +787,7 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 		SDL_Log("Failed to initialize sound: %s", SDL_GetError());
 	}
 
-	spawn_house(p_entityCount, oxygenators, positions, dimensions, colors, p_display_bounds);
+	spawn_house(p_entityCount, oxygenators, positions, dimensions, colors, lights, p_display_bounds);
 	SDL_FRect character_spawn_bounds;
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
 	
@@ -775,7 +801,7 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
 	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors, containables, sprites, oxygen_containers, &character_spawn_bounds);
 	spawn_sharks(10, p_entityCount, orbits, colors, positions, dimensions, distance_constraints, damage_colliders, &spawn_dimensions);
-	spawn_lights(10, p_entityCount, positions, dimensions, colors, lights, sprites, &spawn_dimensions);
+	spawn_outside_lights(5, p_entityCount, positions, dimensions, colors, lights, sprites, &spawn_dimensions);
 }
 
 void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], Positions* positions, Healths* healths, enum GameState* p_game_state, bool left, bool right, bool up, bool down) {
@@ -1192,7 +1218,7 @@ int main() {
 		timespec_get(&start, TIME_UTC);
 		//printf("NS SINCE LAST TICK: %ld\n", time_since_last_tick);
 
-		SDL_SetRenderDrawColor(p_sdl_renderer, 0, 0, 20, 0x00);
+		SDL_SetRenderDrawColor(p_sdl_renderer, 30, 10, 100, 0x00);
 		SDL_RenderClear(p_sdl_renderer);
 
 
@@ -1203,7 +1229,7 @@ int main() {
 		sys_position_dimension_color(&positions, &dimensions, &colors, p_sdl_renderer);
 		sys_position_dimension_sprite(&positions, &dimensions, &sprites, p_sdl_renderer);
 		sys_health_dimension_position(&healths, &positions, &dimensions, p_sdl_renderer);
-		sys_light_position(&time_since_last_tick, p_sdl_renderer, p_lightmap, &lights, &positions);
+		sys_light_position_dimension(&time_since_last_tick, p_sdl_renderer, p_lightmap, &lights, &positions, &dimensions);
 
 		SDL_SetTextureBlendMode(p_lightmap, SDL_BLENDMODE_MUL);   // built-in
 		SDL_RenderTexture(p_sdl_renderer, p_lightmap, NULL, NULL);             // full-screen
