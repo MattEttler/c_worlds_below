@@ -116,6 +116,9 @@ typedef struct c_damage_collider {
 	float damage_per_attack;
 	float time_since_last_attack;
 } c_damage_collider;
+typedef  struct c_light {
+	float brightness;
+} c_light;
 
 COMPONENT(Colors, c_color)
 // TODO: Understand the unnecesarry overhead of using the ecs macro for
@@ -134,10 +137,12 @@ COMPONENT(Sprites, c_sprite)
 COMPONENT(Attachments, c_attachment)
 COMPONENT(Orbits, c_orbit)
 COMPONENT(DamageColliders, c_damage_collider)
+COMPONENT(Lights, c_light)
 
 // Resources: Static assets that may be reused across components/systems
 static c_sprite o2_tank_sprite;
 static c_sprite aquanaut_sprite;
+static c_sprite light_sprite;
 
 // =======================================================================================
 //  ┌─┐┬ ┬┌─┐┌┬┐┌─┐┌┬┐┌─┐
@@ -175,6 +180,68 @@ static bool init_bmp(const char* fname, SDL_Texture** p_texture, SDL_Renderer* p
 
 	SDL_free(sprite_path);
 	return true;
+}
+
+void generate_light_sprite(SDL_Texture** p_texture, SDL_Renderer* p_sdl_renderer)
+{
+    const uint32_t width  = 400;
+    const uint32_t height = 400;
+
+    SDL_Surface* surface = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA8888);
+    if (!surface) return;
+
+    SDL_LockSurface(surface);
+
+    Uint8* base  = (Uint8*)surface->pixels;
+    int    pitch = surface->pitch;
+
+    // center & padded radius (keeps gradient away from the last texel)
+    const float cx      = (width  - 1) * 0.5f;
+    const float cy      = (height - 1) * 0.5f;
+    const float minSide = (float)((width < height) ? width : height);
+    const float pad     = 2.0f;                            // 2px fully transparent border
+    const float maxr    = (minSide * 0.5f) - pad;
+
+    // SDL3 wants PixelFormatDetails for SDL_MapRGBA
+    const SDL_PixelFormatDetails* fmt =
+        SDL_GetPixelFormatDetails(SDL_PIXELFORMAT_RGBA8888);
+
+    for (uint32_t y = 0; y < height; ++y) {
+        Uint32* row = (Uint32*)(base + y * pitch);
+        for (uint32_t x = 0; x < width; ++x) {
+            const float dx = (float)x - cx;
+            const float dy = (float)y - cy;
+            const float r  = sqrtf(dx*dx + dy*dy);
+
+            float normalized_radius = r / maxr;
+            if (normalized_radius < 0.0f) normalized_radius = 0.0f;
+            if (normalized_radius > 1.0f) normalized_radius = 1.0f;
+
+            float inverse_radius = 1.0f - normalized_radius;                           // 1 at center → 0 at edge
+
+            // slight gamma to soften the outer ring
+            const float gamma = 2.2f;                     
+            float a_f = powf(inverse_radius, gamma);
+            if (a_f < 0.0f) a_f = 0.0f;
+            if (a_f > 1.0f) a_f = 1.0f;
+
+            const Uint8 A = (Uint8)(a_f * 255.0f);
+            const Uint8 R = 255, G = 255, B = 255;        // RGB must be white
+
+            row[x] = SDL_MapRGBA(fmt, NULL, R, G, B, A);
+        }
+    }
+
+    SDL_UnlockSurface(surface);
+
+    // Build texture
+    *p_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, surface);
+    SDL_DestroySurface(surface);
+    if (!*p_texture) return;
+
+    // Proper modes for stamping into the lightmap
+    SDL_SetTextureBlendMode(*p_texture, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(*p_texture, SDL_SCALEMODE_LINEAR);
 }
 
 static bool init_sound(c_sound* sound) {
@@ -224,6 +291,35 @@ bool overlaps_pos_dim(c_position* p_position_a, c_dimension* p_dimension_a, c_po
 
 static inline float clampf(float v, float lo, float hi) {
     return (v < lo) ? lo : (v > hi) ? hi : v;
+}
+
+void sys_light_position(long* p_time_since_last_tick_ns, SDL_Renderer* p_sdl_renderer, SDL_Texture* lightmap, Lights* lights, Positions* positions) {
+	uint32_t size = 800;
+	SDL_SetRenderTarget(p_sdl_renderer, lightmap);
+
+	    // Clear to ambient brightness (gray)
+	    Uint8 amb = (Uint8)(SDL_clamp(0, 0.0f, 1.0f) * 255.0f);
+	    SDL_SetRenderDrawBlendMode(p_sdl_renderer, SDL_BLENDMODE_NONE);
+	    SDL_SetRenderDrawColor(p_sdl_renderer, amb, amb, amb, 255);
+	SDL_RenderClear(p_sdl_renderer);
+
+	for (uint32_t i = 0; i < lights->count; i++) {
+		Entity light_entity = lights->entities[i];
+		c_light* p_light = &lights->data[i];
+		c_position* p_position = get_Positions(positions, light_entity);
+
+		SDL_SetTextureAlphaMod(light_sprite, (Uint8)(SDL_clamp(p_light->brightness, 0.0f, 1.0f) * 255));
+
+		SDL_FRect dst;
+		dst.w = size;
+		dst.h = size;
+		dst.x = p_position->x - (size / 2);
+		dst.y = p_position->y - (size / 2);
+
+		SDL_RenderTexture(p_sdl_renderer, light_sprite, NULL, &dst);
+	}
+
+	SDL_SetRenderTarget(p_sdl_renderer, NULL);
 }
 
 void sys_damage_collider_health_position_dimension_sound(long* p_time_since_last_tick_ns, DamageColliders* damage_colliders, Healths* healths, Positions* positions, Dimensions* dimensions, Sounds* sounds) {
@@ -406,6 +502,29 @@ void sys_oxygenator_position_dimension_oxygen_container_sound(long* p_time_since
 		else if (p_oxygen_container_sound != NULL) {
 			remove_Sounds(sounds, oxygen_container_entity);
 		}
+	}
+}
+
+void spawn_lights(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, Lights* lights, Sprites* sprites, c_dimension* p_spawn_dimensions) {
+	for(size_t i = 0; i < spawn_count; i++) {
+		Entity light_entity = *p_entity_count;
+		add_Positions(positions, light_entity, (c_position) {
+				.x = rand() / (RAND_MAX / (p_spawn_dimensions->width - 10 + 1)),
+				.y = rand() / (RAND_MAX / (p_spawn_dimensions->height - 10 + 1)),
+				});
+		add_Dimensions(dimensions, light_entity, (c_dimension) {
+				.width = 30,
+				.height = 30,
+				});
+		add_Colors(colors, light_entity, (c_color) {
+				.red = 255,
+				.green = 255,
+				.blue = 255,
+				});
+		add_Lights(lights, light_entity, (c_light) {
+				.brightness = 10.0f,
+				});
+		*p_entity_count += 1;
 	}
 }
 
@@ -614,7 +733,7 @@ void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* pos
 	(*p_entityCount)++;
 }
 
-void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits, DistanceConstraints* distance_constraints, DamageColliders* damage_colliders, Attachments* attachments) {
+void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits, DistanceConstraints* distance_constraints, DamageColliders* damage_colliders, Attachments* attachments, Lights* lights) {
 	*p_game_state = RUNNING;
 	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
 		*p_entityCount = 0;
@@ -633,6 +752,7 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 		distance_constraints->count = 0;
 		damage_colliders->count = 0;
 		attachments->count = 0;
+		lights->count = 0;
 	}
 
 	add_Sounds(sounds, *p_entityCount, (c_sound){ fname: "background-music.wav", repeat: true });
@@ -655,6 +775,7 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
 	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors, containables, sprites, oxygen_containers, &character_spawn_bounds);
 	spawn_sharks(10, p_entityCount, orbits, colors, positions, dimensions, distance_constraints, damage_colliders, &spawn_dimensions);
+	spawn_lights(10, p_entityCount, positions, dimensions, colors, lights, sprites, &spawn_dimensions);
 }
 
 void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], Positions* positions, Healths* healths, enum GameState* p_game_state, bool left, bool right, bool up, bool down) {
@@ -1031,12 +1152,22 @@ int main() {
 	Orbits orbits = {0};
 	DistanceConstraints distance_constraints = {0};
 	DamageColliders damage_colliders = {0};
+	Lights lights = {0};
 
 	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
 	init_bmp("aquanaut.bmp", &aquanaut_sprite, p_sdl_renderer);
+	generate_light_sprite(&light_sprite, p_sdl_renderer);
 
 	enum GameState game_state;
-	init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments);
+	SDL_Texture* p_lightmap = SDL_CreateTexture(
+			p_sdl_renderer,
+			SDL_PIXELFORMAT_RGBA8888,
+			SDL_TEXTUREACCESS_TARGET,
+			displayBounds.w, displayBounds.h
+			);
+	SDL_SetTextureBlendMode(p_lightmap, SDL_BLENDMODE_ADD);
+
+	init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments, &lights);
 
 	bool player_left = false;
 	bool player_right = false;
@@ -1072,6 +1203,10 @@ int main() {
 		sys_position_dimension_color(&positions, &dimensions, &colors, p_sdl_renderer);
 		sys_position_dimension_sprite(&positions, &dimensions, &sprites, p_sdl_renderer);
 		sys_health_dimension_position(&healths, &positions, &dimensions, p_sdl_renderer);
+		sys_light_position(&time_since_last_tick, p_sdl_renderer, p_lightmap, &lights, &positions);
+
+		SDL_SetTextureBlendMode(p_lightmap, SDL_BLENDMODE_MUL);   // built-in
+		SDL_RenderTexture(p_sdl_renderer, p_lightmap, NULL, NULL);             // full-screen
 
 		/* Center the text and scale it up */
 		SDL_GetRenderOutputSize(p_sdl_renderer, &w, &h);
@@ -1222,7 +1357,7 @@ int main() {
 					   while(SDL_PollEvent(&event)) {
 						   switch(event.type) {
 							   case SDL_EVENT_KEY_DOWN: 
-								   init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments);
+								   init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments, &lights);
 						   }
 					   }
 					   break;
