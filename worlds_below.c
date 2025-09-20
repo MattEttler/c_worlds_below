@@ -116,7 +116,7 @@ typedef struct c_damage_collider {
 	float damage_per_attack;
 	float time_since_last_attack;
 } c_damage_collider;
-typedef  struct c_light {
+typedef struct c_light {
 	uint32_t width;
 	uint32_t height;
 	float brightness;
@@ -124,6 +124,10 @@ typedef  struct c_light {
 	uint8_t green;
 	uint8_t blue;
 } c_light;
+typedef struct c_battery {
+	uint8_t capacity_kwh;
+	uint8_t volume_kwh;
+} c_battery;
 
 COMPONENT(Colors, c_color)
 // TODO: Understand the unnecesarry overhead of using the ecs macro for
@@ -143,11 +147,13 @@ COMPONENT(Attachments, c_attachment)
 COMPONENT(Orbits, c_orbit)
 COMPONENT(DamageColliders, c_damage_collider)
 COMPONENT(Lights, c_light)
+COMPONENT(Batteries, c_battery)
 
 // Resources: Static assets that may be reused across components/systems
 static c_sprite o2_tank_sprite;
 static c_sprite aquanaut_sprite;
 static c_sprite light_sprite;
+static c_sprite battery_sprite;
 
 // =======================================================================================
 //  ┌─┐┬ ┬┌─┐┌┬┐┌─┐┌┬┐┌─┐
@@ -311,6 +317,7 @@ void sys_light_position_dimension(long* p_time_since_last_tick_ns, SDL_Renderer*
 	    SDL_SetRenderDrawBlendMode(p_sdl_renderer, SDL_BLENDMODE_NONE);
 	    SDL_SetRenderDrawColor(p_sdl_renderer, amb, amb, amb, 255);
 	SDL_RenderClear(p_sdl_renderer);
+	SDL_SetTextureScaleMode(light_sprite, SDL_SCALEMODE_LINEAR);
 
 	for (uint32_t i = 0; i < lights->count; i++) {
 		Entity light_entity = lights->entities[i];
@@ -518,6 +525,30 @@ void sys_oxygenator_position_dimension_oxygen_container_sound(long* p_time_since
 	}
 }
 
+void spawn_batteries(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Lights* lights, Sprites* sprites, Batteries* batteries, c_dimension* p_spawn_dimensions) {
+	for (size_t i = 0; i < spawn_count; i++) {
+		Entity battery_entity = *p_entity_count;
+		add_Positions(positions, battery_entity, (c_position) {
+				.x = rand() / (RAND_MAX / (p_spawn_dimensions->width - 10 + 1)),
+				.y = rand() / (RAND_MAX / (p_spawn_dimensions->height - 10 + 1)),
+				});
+		add_Dimensions(dimensions, battery_entity, (c_dimension) {
+				.width = 30,
+				.height = 50,
+				});
+		add_Lights(lights, battery_entity, (c_light) {
+				.height = 200,
+				.width = 120,
+				.brightness = 1.0f,
+				.red = 60,
+				.green = 200,
+				.blue = 60,
+				});
+		add_Sprites(sprites, battery_entity, battery_sprite);
+		*p_entity_count += 1;
+	}
+}
+
 void spawn_outside_lights(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, Lights* lights, Sprites* sprites, c_dimension* p_spawn_dimensions) {
 	for(size_t i = 0; i < spawn_count; i++) {
 		Entity light_entity = *p_entity_count;
@@ -540,7 +571,7 @@ void spawn_outside_lights(uint32_t spawn_count, size_t* p_entity_count, Position
 				.brightness = 1.0f,
 				.red = 255,
 				.green = 0,
-				.blue = 0,
+				.blue = 60,
 				});
 		*p_entity_count += 1;
 	}
@@ -565,8 +596,8 @@ void spawn_sharks(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, 
 		add_Orbits(orbits, segment_1, (c_orbit) {
 				.phase = rand() / (RAND_MAX / TWO_PI),      // radians
 				.freq_hz = (double)rand() / (RAND_MAX * 100),    // revs per second
-				.amp_x = p_spawn_bounds->width/2,      // ellipse radius on X
-				.amp_y = p_spawn_bounds->height/2,      // ellipse radius on X
+				.amp_x = rand() / (RAND_MAX / p_spawn_bounds->width/4),      // ellipse radius on X
+				.amp_y = rand() / (RAND_MAX / p_spawn_bounds->height/4),      // ellipse radius on X
 				.base_x = p_spawn_bounds->width/2,      // ellipse radius on X
 				.base_y = p_spawn_bounds->height/2,      // ellipse radius on X
 				.rot_rad = rand() / (RAND_MAX / TWO_PI),    // ellipse rotation (0 for axis-aligned)
@@ -706,8 +737,16 @@ void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, Healths* healt
 	}
 }
 
-void spawn_player(size_t *p_entityCount, bool player_controlled[], Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Sprites* sprites, OxygenConsumers* oxygen_consumers, SDL_FRect *p_rect_spawn_bounds) {
+void spawn_player(size_t *p_entityCount, bool player_controlled[], Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Sprites* sprites, OxygenConsumers* oxygen_consumers, Lights* lights, SDL_FRect *p_rect_spawn_bounds) {
 	player_controlled[*p_entityCount] = true;
+	add_Lights(lights, *p_entityCount, (c_light) {
+		.red = 200,
+		.green = 200,
+		.blue = 200,
+		.width = 200,
+		.height = 200,
+		.brightness = 1,
+	});
 	spawn_characters(1, p_entityCount, healths, containers, positions, dimensions, sprites, oxygen_consumers, p_rect_spawn_bounds);
 	printf("<PLAYER SPAWNED>%s\n", player_controlled[*p_entityCount] ? "true" : "false");
 }
@@ -748,9 +787,9 @@ void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* pos
 		.blue = 100
 	});
 	add_Lights(lights, *p_entityCount, (c_light) {
-		.width = 800,
-		.height = 800,
-		.brightness = 1.0f,
+		.width = 600,
+		.height = 600,
+		.brightness = .6f,
 		.red = 250,
 		.green = 250,
 		.blue = 200,
@@ -759,7 +798,7 @@ void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* pos
 	(*p_entityCount)++;
 }
 
-void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits, DistanceConstraints* distance_constraints, DamageColliders* damage_colliders, Attachments* attachments, Lights* lights) {
+void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits, DistanceConstraints* distance_constraints, DamageColliders* damage_colliders, Attachments* attachments, Lights* lights, Batteries* batteries) {
 	*p_game_state = RUNNING;
 	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
 		*p_entityCount = 0;
@@ -779,6 +818,7 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 		damage_colliders->count = 0;
 		attachments->count = 0;
 		lights->count = 0;
+		batteries->count = 0;
 	}
 
 	add_Sounds(sounds, *p_entityCount, (c_sound){ fname: "background-music.wav", repeat: true });
@@ -798,10 +838,11 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 	};
 
 	spawn_characters(10, p_entityCount, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
-	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
+	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, sprites, oxygen_consumers, lights, &character_spawn_bounds);
 	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors, containables, sprites, oxygen_containers, &character_spawn_bounds);
 	spawn_sharks(10, p_entityCount, orbits, colors, positions, dimensions, distance_constraints, damage_colliders, &spawn_dimensions);
 	spawn_outside_lights(5, p_entityCount, positions, dimensions, colors, lights, sprites, &spawn_dimensions);
+	spawn_batteries(3, p_entityCount, positions, dimensions, lights, sprites, batteries, &spawn_dimensions);
 }
 
 void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], Positions* positions, Healths* healths, enum GameState* p_game_state, bool left, bool right, bool up, bool down) {
@@ -1061,6 +1102,7 @@ void sys_position_dimension_sprite(Positions* positions, Dimensions* dimensions,
 		dst.x = p_position->x;
 		dst.y = p_position->y;
 
+		SDL_SetTextureScaleMode(*p_sprite, SDL_SCALEMODE_NEAREST);
 		SDL_RenderTexture(p_sdl_renderer, *p_sprite, NULL, &dst);
 	}
 }
@@ -1179,9 +1221,11 @@ int main() {
 	DistanceConstraints distance_constraints = {0};
 	DamageColliders damage_colliders = {0};
 	Lights lights = {0};
+	Batteries batteries = {0};
 
 	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
 	init_bmp("aquanaut.bmp", &aquanaut_sprite, p_sdl_renderer);
+	init_bmp("battery.bmp", &battery_sprite, p_sdl_renderer);
 	generate_light_sprite(&light_sprite, p_sdl_renderer);
 
 	enum GameState game_state;
@@ -1193,7 +1237,7 @@ int main() {
 			);
 	SDL_SetTextureBlendMode(p_lightmap, SDL_BLENDMODE_ADD);
 
-	init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments, &lights);
+	init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments, &lights, &batteries);
 
 	bool player_left = false;
 	bool player_right = false;
@@ -1220,9 +1264,6 @@ int main() {
 
 		SDL_SetRenderDrawColor(p_sdl_renderer, 30, 10, 100, 0x00);
 		SDL_RenderClear(p_sdl_renderer);
-
-
-
 
 		SDL_SetRenderScale(p_sdl_renderer, 1.0, 1.0);
 		sys_attachment_position(&attachments, &positions);
@@ -1383,7 +1424,7 @@ int main() {
 					   while(SDL_PollEvent(&event)) {
 						   switch(event.type) {
 							   case SDL_EVENT_KEY_DOWN: 
-								   init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments, &lights);
+								   init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments, &lights, &batteries);
 						   }
 					   }
 					   break;
