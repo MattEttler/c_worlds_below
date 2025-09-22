@@ -8,16 +8,17 @@
 #include <assert.h>
 
 #include "ecs.h"
+#include "uuid4.h"
 
 #define min(a,b)  \
-({ __typeof__ (a) _a = (a); \
-__typeof__ (b) _b = (b); \
-_a < _b ? _a : _b; })
+	({ __typeof__ (a) _a = (a); \
+	 __typeof__ (b) _b = (b); \
+	 _a < _b ? _a : _b; })
 
 #define max(a,b)  \
-({ __typeof__ (a) _a = (a); \
-__typeof__ (b) _b = (b); \
-_a > _b ? _a : _b; })
+	({ __typeof__ (a) _a = (a); \
+	 __typeof__ (b) _b = (b); \
+	 _a > _b ? _a : _b; })
 
 #define CONTAINER_SIZE 10
 #define TWO_PI (2.0f * (float)M_PI)
@@ -41,7 +42,23 @@ enum GameState {
 	RUNNING,
 	PAUSED,
 	GAME_OVER,
-	WON
+	WON,
+	QUIT,
+};
+
+struct InputBindings {
+	SDL_Scancode left, right, up, down;
+	SDL_Scancode interact, exit;
+} InputBindings;
+
+enum ButtonBit {
+	BTN_LEFT 		= 1u << 0,
+	BTN_RIGHT 		= 1u << 1,
+	BTN_UP 			= 1u << 2,
+	BTN_DOWN 		= 1u << 3,
+	BTN_INTERACT 		= 1u << 4,
+	BTN_BACK	 	= 1u << 5,
+	BTN_QUIT	 	= 1u << 6,
 };
 
 // =======================================================================================
@@ -93,23 +110,23 @@ typedef struct c_container {
 } c_container;
 typedef SDL_Texture* c_sprite;
 typedef struct c_orbit {
-    float phase;      // radians
-    float freq_hz;    // revs per second
-    float amp_x;      // ellipse radius on X
-    float amp_y;      // ellipse radius on Y
-    float base_x;     // center X
-    float base_y;     // center Y
-    float rot_rad;    // ellipse rotation (0 for axis-aligned)
-    int   inited;     // capture base once if you want
+	float phase;      // radians
+	float freq_hz;    // revs per second
+	float amp_x;      // ellipse radius on X
+	float amp_y;      // ellipse radius on Y
+	float base_x;     // center X
+	float base_y;     // center Y
+	float rot_rad;    // ellipse rotation (0 for axis-aligned)
+	int   inited;     // capture base once if you want
 } c_orbit;
 typedef struct c_distance_constraint {
-    Entity anchor;      // anchor entity
-    float  min_dist;   // 0 for no minimum
-    float  max_dist;   // <=0 for no maximum
-    float  stiffness;  // 0..1 (1 = hard snap, <1 = partial correction)
-    int    move_both;  // 0 = move self only, 1 = split correction
-    float  inv_mass_self;   // used if move_both==1
-    float  inv_mass_other;  // used if move_both==1
+	Entity anchor;      // anchor entity
+	float  min_dist;   // 0 for no minimum
+	float  max_dist;   // <=0 for no maximum
+	float  stiffness;  // 0..1 (1 = hard snap, <1 = partial correction)
+	int    move_both;  // 0 = move self only, 1 = split correction
+	float  inv_mass_self;   // used if move_both==1
+	float  inv_mass_other;  // used if move_both==1
 } c_distance_constraint;
 typedef struct c_damage_collider {
 	float attacks_per_second;
@@ -128,131 +145,146 @@ typedef struct c_battery {
 	uint8_t capacity_kwh;
 	uint8_t volume_kwh;
 } c_battery;
+typedef enum { CTRL_LOCAL, CTRL_REMOTE_AI, CTRL_REMOTE_NET } ControllerType;
+typedef struct ButtonStates {
+	uint32_t pressed;
+	uint32_t released;
+	uint32_t held;
+} ButtonStates;
+typedef struct c_player {
+	char displayName[32];
+	char playerId[UUID4_LEN];
+	ControllerType type;
+	ButtonStates button_states;
+	float delta_x;
+	float delta_y;
+} c_player;
 
 COMPONENT(Colors, c_color)
-// TODO: Understand the unnecesarry overhead of using the ecs macro for
-// these simple bool-type flags vs just an array of entity pointers
-COMPONENT(Containables, c_containable)
-COMPONENT(Containers, c_container)
-COMPONENT(Dimensions, c_dimension)
-COMPONENT(DistanceConstraints, c_distance_constraint)
-COMPONENT(Healths, c_health)
-COMPONENT(Oxygenators, c_oxygenator)
-COMPONENT(OxygenConsumers, c_oxygen_consumer)
-COMPONENT(OxygenContainers, c_oxygen_container)
-COMPONENT(Positions, c_position)
-COMPONENT(Sounds, c_sound)
-COMPONENT(Sprites, c_sprite)
-COMPONENT(Attachments, c_attachment)
-COMPONENT(Orbits, c_orbit)
-COMPONENT(DamageColliders, c_damage_collider)
-COMPONENT(Lights, c_light)
-COMPONENT(Batteries, c_battery)
+	// TODO: Understand the unnecesarry overhead of using the ecs macro for
+	// these simple bool-type flags vs just an array of entity pointers
+	COMPONENT(Containables, c_containable)
+	COMPONENT(Containers, c_container)
+	COMPONENT(Dimensions, c_dimension)
+	COMPONENT(DistanceConstraints, c_distance_constraint)
+	COMPONENT(Healths, c_health)
+	COMPONENT(Oxygenators, c_oxygenator)
+	COMPONENT(OxygenConsumers, c_oxygen_consumer)
+	COMPONENT(OxygenContainers, c_oxygen_container)
+	COMPONENT(Positions, c_position)
+	COMPONENT(Sounds, c_sound)
+	COMPONENT(Sprites, c_sprite)
+	COMPONENT(Attachments, c_attachment)
+	COMPONENT(Orbits, c_orbit)
+	COMPONENT(DamageColliders, c_damage_collider)
+	COMPONENT(Lights, c_light)
+	COMPONENT(Batteries, c_battery)
+COMPONENT(Players, c_player)
 
-// Resources: Static assets that may be reused across components/systems
-static c_sprite o2_tank_sprite;
-static c_sprite aquanaut_sprite;
-static c_sprite light_sprite;
-static c_sprite battery_sprite;
+	// Resources: Static assets that may be reused across components/systems
+	static c_sprite o2_tank_sprite;
+	static c_sprite aquanaut_sprite;
+	static c_sprite light_sprite;
+	static c_sprite battery_sprite;
 
-// =======================================================================================
-//  ┌─┐┬ ┬┌─┐┌┬┐┌─┐┌┬┐┌─┐
-//  └─┐└┬┘└─┐ │ ├┤ │││└─┐
-//  └─┘ ┴ └─┘ ┴ └─┘┴ ┴└─┘
-//  generally game systems use the following convention: 
-//  `sys_<component_a>_<component_b>_...(entityCount, component_a[], component_b[])`
-//  where the system is named based on the data components required to operate the system,
-//  ideally in the same order as the parameters.
-//
-// TODO: there is probably some sort of optimization sampling I can add to every system
-// To make sure the component with the lowest count is always checked first.
+	// =======================================================================================
+	//  ┌─┐┬ ┬┌─┐┌┬┐┌─┐┌┬┐┌─┐
+	//  └─┐└┬┘└─┐ │ ├┤ │││└─┐
+	//  └─┘ ┴ └─┘ ┴ └─┘┴ ┴└─┘
+	//  generally game systems use the following convention: 
+	//  `sys_<component_a>_<component_b>_...(entity_count, component_a[], component_b[])`
+	//  where the system is named based on the data components required to operate the system,
+	//  ideally in the same order as the parameters.
+	//
+	// TODO: there is probably some sort of optimization sampling I can add to every system
+	// To make sure the component with the lowest count is always checked first.
 
-static bool init_bmp(const char* fname, SDL_Texture** p_texture, SDL_Renderer* p_sdl_renderer) {
-	char* sprite_path = NULL;
+	static bool init_bmp(const char* fname, SDL_Texture** p_texture, SDL_Renderer* p_sdl_renderer) {
+		char* sprite_path = NULL;
 
-	SDL_asprintf(&sprite_path, "%sresources\\%s", SDL_GetBasePath(), fname);
-	SDL_Surface* p_surface = SDL_LoadBMP(sprite_path);
+		SDL_asprintf(&sprite_path, "%sresources\\%s", SDL_GetBasePath(), fname);
+		SDL_Surface* p_surface = SDL_LoadBMP(sprite_path);
 
-	if(p_surface == NULL) {
-		SDL_Log("Could not load .bmp file: %s", SDL_GetError());
-		return false;
-	} else {
-		Uint32 colorkey = SDL_MapRGB(SDL_GetPixelFormatDetails(p_surface->format), NULL, 255, 0, 255);
-		SDL_SetSurfaceColorKey(p_surface, true, colorkey);
-		*p_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, p_surface);
+		if(p_surface == NULL) {
+			SDL_Log("Could not load .bmp file: %s", SDL_GetError());
+			return false;
+		} else {
+			Uint32 colorkey = SDL_MapRGB(SDL_GetPixelFormatDetails(p_surface->format), NULL, 255, 0, 255);
+			SDL_SetSurfaceColorKey(p_surface, true, colorkey);
+			*p_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, p_surface);
+		}
+
+		SDL_DestroySurface(p_surface);
+
+		if (*p_texture == NULL) {
+			SDL_Log("Could not create texture from .bmp file: %s", SDL_GetError());
+			return false;
+		}
+
+		SDL_free(sprite_path);
+		return true;
 	}
-
-	SDL_DestroySurface(p_surface);
-
-	if (*p_texture == NULL) {
-		SDL_Log("Could not create texture from .bmp file: %s", SDL_GetError());
-		return false;
-	}
-
-	SDL_free(sprite_path);
-	return true;
-}
 
 void generate_light_sprite(SDL_Texture** p_texture, SDL_Renderer* p_sdl_renderer)
 {
-    const uint32_t width  = 400;
-    const uint32_t height = 400;
+	const uint32_t width  = 400;
+	const uint32_t height = 400;
 
-    SDL_Surface* surface = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA8888);
-    if (!surface) return;
+	SDL_Surface* surface = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA8888);
+	if (!surface) return;
 
-    SDL_LockSurface(surface);
+	SDL_LockSurface(surface);
 
-    Uint8* base  = (Uint8*)surface->pixels;
-    int    pitch = surface->pitch;
+	Uint8* base  = (Uint8*)surface->pixels;
+	int    pitch = surface->pitch;
 
-    // center & padded radius (keeps gradient away from the last texel)
-    const float cx      = (width  - 1) * 0.5f;
-    const float cy      = (height - 1) * 0.5f;
-    const float minSide = (float)((width < height) ? width : height);
-    const float pad     = 2.0f;                            // 2px fully transparent border
-    const float maxr    = (minSide * 0.5f) - pad;
+	// center & padded radius (keeps gradient away from the last texel)
+	const float cx      = (width  - 1) * 0.5f;
+	const float cy      = (height - 1) * 0.5f;
+	const float minSide = (float)((width < height) ? width : height);
+	const float pad     = 2.0f;                            // 2px fully transparent border
+	const float maxr    = (minSide * 0.5f) - pad;
 
-    // SDL3 wants PixelFormatDetails for SDL_MapRGBA
-    const SDL_PixelFormatDetails* fmt =
-        SDL_GetPixelFormatDetails(SDL_PIXELFORMAT_RGBA8888);
+	// SDL3 wants PixelFormatDetails for SDL_MapRGBA
+	const SDL_PixelFormatDetails* fmt =
+		SDL_GetPixelFormatDetails(SDL_PIXELFORMAT_RGBA8888);
 
-    for (uint32_t y = 0; y < height; ++y) {
-        Uint32* row = (Uint32*)(base + y * pitch);
-        for (uint32_t x = 0; x < width; ++x) {
-            const float dx = (float)x - cx;
-            const float dy = (float)y - cy;
-            const float r  = sqrtf(dx*dx + dy*dy);
+	for (uint32_t y = 0; y < height; ++y) {
+		Uint32* row = (Uint32*)(base + y * pitch);
+		for (uint32_t x = 0; x < width; ++x) {
+			const float dx = (float)x - cx;
+			const float dy = (float)y - cy;
+			const float r  = sqrtf(dx*dx + dy*dy);
 
-            float normalized_radius = r / maxr;
-            if (normalized_radius < 0.0f) normalized_radius = 0.0f;
-            if (normalized_radius > 1.0f) normalized_radius = 1.0f;
+			float normalized_radius = r / maxr;
+			if (normalized_radius < 0.0f) normalized_radius = 0.0f;
+			if (normalized_radius > 1.0f) normalized_radius = 1.0f;
 
-            float inverse_radius = 1.0f - normalized_radius;                           // 1 at center → 0 at edge
+			float inverse_radius = 1.0f - normalized_radius;                           // 1 at center → 0 at edge
 
-            // slight gamma to soften the outer ring
-            const float gamma = 1.5f;                     
-            float a_f = powf(inverse_radius, gamma);
-            if (a_f < 0.0f) a_f = 0.0f;
-            if (a_f > 1.0f) a_f = 1.0f;
+			// slight gamma to soften the outer ring
+			const float gamma = 1.5f;                     
+			float a_f = powf(inverse_radius, gamma);
+			if (a_f < 0.0f) a_f = 0.0f;
+			if (a_f > 1.0f) a_f = 1.0f;
 
-            const Uint8 A = (Uint8)(a_f * 255.0f);
-            const Uint8 R = 255, G = 255, B = 255;        // RGB must be white
+			const Uint8 A = (Uint8)(a_f * 255.0f);
+			const Uint8 R = 255, G = 255, B = 255;        // RGB must be white
 
-            row[x] = SDL_MapRGBA(fmt, NULL, R, G, B, A);
-        }
-    }
+			row[x] = SDL_MapRGBA(fmt, NULL, R, G, B, A);
+		}
+	}
 
-    SDL_UnlockSurface(surface);
+	SDL_UnlockSurface(surface);
 
-    // Build texture
-    *p_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, surface);
-    SDL_DestroySurface(surface);
-    if (!*p_texture) return;
+	// Build texture
+	*p_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, surface);
+	SDL_DestroySurface(surface);
+	if (!*p_texture) return;
 
-    // Proper modes for stamping into the lightmap
-    SDL_SetTextureBlendMode(*p_texture, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(*p_texture, SDL_SCALEMODE_LINEAR);
+	// Proper modes for stamping into the lightmap
+	SDL_SetTextureBlendMode(*p_texture, SDL_BLENDMODE_BLEND);
+	SDL_SetTextureScaleMode(*p_texture, SDL_SCALEMODE_LINEAR);
 }
 
 static bool init_sound(c_sound* sound) {
@@ -282,7 +314,7 @@ static bool init_sound(c_sound* sound) {
 bool overlaps_pos_dim(c_position* p_position_a, c_dimension* p_dimension_a, c_position* p_position_b, c_dimension* p_dimension_b) {
 	c_dimension default_dimension = (c_dimension) {
 		.width = 1,
-		.height = 1
+			.height = 1
 	};
 	if (p_dimension_a == NULL) {
 		p_dimension_a = &default_dimension;
@@ -301,21 +333,21 @@ bool overlaps_pos_dim(c_position* p_position_a, c_dimension* p_dimension_a, c_po
 }
 
 static inline float clampf(float v, float lo, float hi) {
-    return (v < lo) ? lo : (v > hi) ? hi : v;
+	return (v < lo) ? lo : (v > hi) ? hi : v;
 }
 
 void sys_light_position_dimension(long* p_time_since_last_tick_ns, SDL_Renderer* p_sdl_renderer, SDL_Texture* lightmap, Lights* lights, Positions* positions, Dimensions* dimensions) {
 	c_dimension default_dimension = (c_dimension) {
 		.width = 0,
-		.height = 0,
+			.height = 0,
 	};
 
 	SDL_SetRenderTarget(p_sdl_renderer, lightmap);
 
-	    // Clear to ambient brightness (gray)
-	    Uint8 amb = (Uint8)(SDL_clamp(0, 0.0f, 1.0f) * 255.0f);
-	    SDL_SetRenderDrawBlendMode(p_sdl_renderer, SDL_BLENDMODE_NONE);
-	    SDL_SetRenderDrawColor(p_sdl_renderer, amb, amb, amb, 255);
+	// Clear to ambient brightness (gray)
+	Uint8 amb = (Uint8)(SDL_clamp(0, 0.0f, 1.0f) * 255.0f);
+	SDL_SetRenderDrawBlendMode(p_sdl_renderer, SDL_BLENDMODE_NONE);
+	SDL_SetRenderDrawColor(p_sdl_renderer, amb, amb, amb, 255);
 	SDL_RenderClear(p_sdl_renderer);
 	SDL_SetTextureScaleMode(light_sprite, SDL_SCALEMODE_LINEAR);
 
@@ -344,7 +376,7 @@ void sys_light_position_dimension(long* p_time_since_last_tick_ns, SDL_Renderer*
 
 void sys_damage_collider_health_position_dimension_sound(long* p_time_since_last_tick_ns, DamageColliders* damage_colliders, Healths* healths, Positions* positions, Dimensions* dimensions, Sounds* sounds) {
 	float delta_time = (float)(*p_time_since_last_tick_ns) / NANO_SECONDS_PER_SECOND; // ns → s
-											  
+
 	for (uint32_t i = 0; i < damage_colliders->count; i++) {
 		Entity damage_collider_entity = damage_colliders->entities[i];
 		c_damage_collider* p_damage_collider = &damage_colliders->data[i];
@@ -383,82 +415,82 @@ void sys_damage_collider_health_position_dimension_sound(long* p_time_since_last
 }
 
 void sys_distance_constraint_position(DistanceConstraints* constraints, Positions* positions) {
-    for (uint32_t i = 0; i < constraints->count; i++) {
-        Entity self_entity     = constraints->entities[i];
-        c_distance_constraint* c = &constraints->data[i];
+	for (uint32_t i = 0; i < constraints->count; i++) {
+		Entity self_entity     = constraints->entities[i];
+		c_distance_constraint* c = &constraints->data[i];
 
-        c_position* p_self  = get_Positions(positions, self_entity);
-        c_position* p_other = get_Positions(positions, c->anchor);
-        if (!p_self || !p_other) continue;
+		c_position* p_self  = get_Positions(positions, self_entity);
+		c_position* p_other = get_Positions(positions, c->anchor);
+		if (!p_self || !p_other) continue;
 
-        float dx = p_self->x - p_other->x;
-        float dy = p_self->y - p_other->y;
-        float dist_sq = dx*dx + dy*dy;
+		float dx = p_self->x - p_other->x;
+		float dy = p_self->y - p_other->y;
+		float dist_sq = dx*dx + dy*dy;
 
-        // No distance → pick a fallback direction if we need to enforce a positive min_dist.
-        if (dist_sq < 1e-12f) {
-            if (c->min_dist > 0.0f) {
-                float nx = 1.0f, ny = 0.0f; // arbitrary
-                float target = c->min_dist;
-                float sx = nx * target;
-                float sy = ny * target;
+		// No distance → pick a fallback direction if we need to enforce a positive min_dist.
+		if (dist_sq < 1e-12f) {
+			if (c->min_dist > 0.0f) {
+				float nx = 1.0f, ny = 0.0f; // arbitrary
+				float target = c->min_dist;
+				float sx = nx * target;
+				float sy = ny * target;
 
-                if (!c->move_both) {
-                    p_self->x = p_other->x + sx;
-                    p_self->y = p_other->y + sy;
-                } else {
-                    float w1 = fmaxf(c->inv_mass_self,  0.0f);
-                    float w2 = fmaxf(c->inv_mass_other, 0.0f);
-                    float wsum = w1 + w2;
-                    if (wsum > 0.0f) {
-                        float k1 = w1 / wsum, k2 = w2 / wsum;
-                        p_self->x  = p_self->x  + (sx)*k1;
-                        p_self->y  = p_self->y  + (sy)*k1;
-                        p_other->x = p_other->x - (sx)*k2;
-                        p_other->y = p_other->y - (sy)*k2;
-                    }
-                }
-            }
-            continue;
-        }
+				if (!c->move_both) {
+					p_self->x = p_other->x + sx;
+					p_self->y = p_other->y + sy;
+				} else {
+					float w1 = fmaxf(c->inv_mass_self,  0.0f);
+					float w2 = fmaxf(c->inv_mass_other, 0.0f);
+					float wsum = w1 + w2;
+					if (wsum > 0.0f) {
+						float k1 = w1 / wsum, k2 = w2 / wsum;
+						p_self->x  = p_self->x  + (sx)*k1;
+						p_self->y  = p_self->y  + (sy)*k1;
+						p_other->x = p_other->x - (sx)*k2;
+						p_other->y = p_other->y - (sy)*k2;
+					}
+				}
+			}
+			continue;
+		}
 
-        float dist = sqrtf(dist_sq);
-        float nx = dx / dist;
-        float ny = dy / dist;
+		float dist = sqrtf(dist_sq);
+		float nx = dx / dist;
+		float ny = dy / dist;
 
-        // Compute target distance within [min,max]
-        float target = dist;
-        if (c->max_dist > 0.0f) target = fminf(target, c->max_dist);
-        if (c->min_dist > 0.0f) target = fmaxf(target, c->min_dist);
-        if (target == dist) continue; // already satisfied
+		// Compute target distance within [min,max]
+		float target = dist;
+		if (c->max_dist > 0.0f) target = fminf(target, c->max_dist);
+		if (c->min_dist > 0.0f) target = fmaxf(target, c->min_dist);
+		if (target == dist) continue; // already satisfied
 
-        // How much to change the distance along the line (positive = too far, negative = too close)
-        float delta = dist - target;
+		// How much to change the distance along the line (positive = too far, negative = too close)
+		float delta = dist - target;
 
-        // Correction vector (scaled by stiffness)
-        float k = (c->stiffness > 0.0f) ? ((c->stiffness <= 1.0f) ? c->stiffness : 1.0f) : 0.0f;
-        float corr_x = delta * nx * k;
-        float corr_y = delta * ny * k;
+		// Correction vector (scaled by stiffness)
+		float k = (c->stiffness > 0.0f) ? ((c->stiffness <= 1.0f) ? c->stiffness : 1.0f) : 0.0f;
+		float corr_x = delta * nx * k;
+		float corr_y = delta * ny * k;
 
-        if (!c->move_both) {
-            // Move self only: pull/push along the line toward the target distance
-            p_self->x -= corr_x;
-            p_self->y -= corr_y;
-        } else {
-            // Split correction by inverse masses (Position-Based Dynamics style)
-            float w1 = fmaxf(c->inv_mass_self,  0.0f);
-            float w2 = fmaxf(c->inv_mass_other, 0.0f);
-            float wsum = w1 + w2;
-            if (wsum > 0.0f) {
-                float k1 = w1 / wsum;
-                float k2 = w2 / wsum;
-                p_self->x  -= corr_x * k1;
-                p_self->y  -= corr_y * k1;
-                p_other->x += corr_x * k2;
-                p_other->y += corr_y * k2;
-            }
-        }
-    }
+		if (!c->move_both) {
+			// Move self only: pull/push along the line toward the target distance
+			p_self->x -= corr_x;
+			p_self->y -= corr_y;
+		} else {
+			// Split correction by inverse masses (Position-Based Dynamics style)
+			float w1 = fmaxf(c->inv_mass_self,  0.0f);
+			float w2 = fmaxf(c->inv_mass_other, 0.0f);
+			float wsum = w1 + w2;
+			if (wsum > 0.0f) {
+				float k1 = w1 / wsum;
+				float k2 = w2 / wsum;
+				p_self->x  -= corr_x * k1;
+				p_self->y  -= corr_y * k1;
+				p_other->x += corr_x * k2;
+				p_other->y += corr_y * k2;
+			}
+		}
+	}
 }
 
 void sys_sound(Sounds* sounds) {
@@ -474,7 +506,7 @@ void sys_sound(Sounds* sounds) {
 			sound->played = true;
 			SDL_PutAudioStreamData(sound->stream, sound->wav_data, sound->wav_data_len);
 		}
-				
+
 	}
 }
 
@@ -589,9 +621,9 @@ void spawn_sharks(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, 
 				.height = 50,
 				});
 		add_Colors(colors, segment_1, (c_color) {
-			.red = 50,
-			.green = 50,
-			.blue = 70
+				.red = 50,
+				.green = 50,
+				.blue = 70
 				});
 		add_Orbits(orbits, segment_1, (c_orbit) {
 				.phase = rand() / (RAND_MAX / TWO_PI),      // radians
@@ -619,10 +651,10 @@ void spawn_sharks(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, 
 				.height = 45,
 				});
 		add_Colors(colors, segment_2, (c_color) {
-			.red = 50,
-			.green = 50,
-			.blue = 70
-			});
+				.red = 50,
+				.green = 50,
+				.blue = 70
+				});
 		add_DistanceConstraints(distance_constraints, segment_2, (c_distance_constraint) {
 				.anchor = segment_1,
 				.min_dist = 50,   // 0 for no minimum
@@ -644,10 +676,10 @@ void spawn_sharks(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, 
 				.height = 35,
 				});
 		add_Colors(colors, segment_3, (c_color) {
-			.red = 50,
-			.green = 50,
-			.blue = 70
-			});
+				.red = 50,
+				.green = 50,
+				.blue = 70
+				});
 		add_DistanceConstraints(distance_constraints, segment_3, (c_distance_constraint) {
 				.anchor = segment_2,
 				.min_dist = 50,   // 0 for no minimum
@@ -712,19 +744,19 @@ void spawn_sharks(uint32_t spawn_count, size_t* p_entity_count, Orbits* orbits, 
 	}
 }
 
-void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Sprites* sprites, OxygenConsumers* oxygen_consumers, SDL_FRect *p_rect_spawn_bounds) {
+void spawn_characters(uint32_t spawnCount, size_t *p_entity_count, Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Sprites* sprites, OxygenConsumers* oxygen_consumers, SDL_FRect *p_rect_spawn_bounds) {
 	uint32_t character_width = 50;
 	uint32_t character_height = 50;
 	for(int i = 0; i < spawnCount; i++) {
-		size_t entity = (*p_entityCount);
+		size_t entity = (*p_entity_count);
 
 		c_position position = (c_position) {
 			.x = rand() / (RAND_MAX / (p_rect_spawn_bounds->w - character_width + 1)) + p_rect_spawn_bounds->x,
-			.y = rand() / (RAND_MAX / (p_rect_spawn_bounds->h - character_height + 1)) + p_rect_spawn_bounds->y,
+				.y = rand() / (RAND_MAX / (p_rect_spawn_bounds->h - character_height + 1)) + p_rect_spawn_bounds->y,
 		};
 		c_dimension dimension = (c_dimension) {
 			.width = character_width,
-			.height = character_height,
+				.height = character_height,
 		};
 		add_Positions(positions, entity, position);
 		add_Dimensions(dimensions, entity, dimension);
@@ -732,23 +764,27 @@ void spawn_characters(uint32_t spawnCount, size_t *p_entityCount, Healths* healt
 		add_Healths(healths, entity, MAX_HEALTH);
 		add_OxygenConsumers(oxygen_consumers, entity, 2.5);
 		add_Containers(containers, entity, (c_container) { .containables = {}, .count = 0 });
-		printf("<CHARACTER_SPAWNED> %zu", *p_entityCount);
-		(*p_entityCount)++;
+		printf("<CHARACTER_SPAWNED> %zu", *p_entity_count);
+		(*p_entity_count)++;
 	}
 }
 
-void spawn_player(size_t *p_entityCount, bool player_controlled[], Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Sprites* sprites, OxygenConsumers* oxygen_consumers, Lights* lights, SDL_FRect *p_rect_spawn_bounds) {
-	player_controlled[*p_entityCount] = true;
-	add_Lights(lights, *p_entityCount, (c_light) {
-		.red = 200,
-		.green = 200,
-		.blue = 200,
-		.width = 200,
-		.height = 200,
-		.brightness = 1,
-	});
-	spawn_characters(1, p_entityCount, healths, containers, positions, dimensions, sprites, oxygen_consumers, p_rect_spawn_bounds);
-	printf("<PLAYER SPAWNED>%s\n", player_controlled[*p_entityCount] ? "true" : "false");
+void spawn_player(size_t *p_entity_count, Players* players, Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Sprites* sprites, OxygenConsumers* oxygen_consumers, Lights* lights, SDL_FRect *p_rect_spawn_bounds) {
+	c_player player = (c_player) {
+		.displayName = "Player",
+			.type = CTRL_LOCAL,
+	};
+	add_Players(players, *p_entity_count, player);
+	add_Lights(lights, *p_entity_count, (c_light) {
+			.red = 200,
+			.green = 200,
+			.blue = 200,
+			.width = 200,
+			.height = 200,
+			.brightness = 1,
+			});
+	spawn_characters(1, p_entity_count, healths, containers, positions, dimensions, sprites, oxygen_consumers, p_rect_spawn_bounds);
+	printf("<PLAYER SPAWNED>\n");
 }
 
 void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Sprites* sprites, OxygenContainers* oxygen_containers, SDL_FRect *p_rect_spawn_bounds) {
@@ -757,9 +793,9 @@ void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* pos
 	for(uint32_t i = 0; i < spawn_count; i++) {
 		Entity entity = *p_entity_count;
 		add_Positions(positions, entity, (c_position) {
-			.x = rand() / (RAND_MAX / (p_rect_spawn_bounds->w - width + 1)) + p_rect_spawn_bounds->x,
-			.y = rand() / (RAND_MAX / (p_rect_spawn_bounds->h - height + 1)) + p_rect_spawn_bounds->y,
-		});
+				.x = rand() / (RAND_MAX / (p_rect_spawn_bounds->w - width + 1)) + p_rect_spawn_bounds->x,
+				.y = rand() / (RAND_MAX / (p_rect_spawn_bounds->h - height + 1)) + p_rect_spawn_bounds->y,
+				});
 		add_Dimensions(dimensions, entity, (c_dimension) { .width = width, height = height });
 		add_Containables(containables, entity, true);
 		add_OxygenContainers(oxygen_containers, entity, (c_oxygen_container) { .volume_m3 = 10, .capacity_m3 = 10 });
@@ -769,39 +805,39 @@ void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* pos
 	}
 }
 
-void spawn_house(size_t *p_entityCount, Oxygenators* oxygenators, Positions* positions, Dimensions* dimensions, Colors* colors, Lights* lights, SDL_Rect *p_display_bounds) {
+void spawn_house(size_t *p_entity_count, Oxygenators* oxygenators, Positions* positions, Dimensions* dimensions, Colors* colors, Lights* lights, SDL_Rect *p_display_bounds) {
 	const uint32_t HOUSE_WIDTH = 300;
 	const uint32_t HOUSE_HEIGHT = 300;
-	add_Oxygenators(oxygenators, *p_entityCount, true);
-	add_Positions(positions, *p_entityCount, (c_position) {
-		.x = (p_display_bounds->w / 2) - (HOUSE_WIDTH / 2),
-		.y = (p_display_bounds->h / 2) - (HOUSE_HEIGHT / 2),
-	});
-	add_Dimensions(dimensions, *p_entityCount, (c_dimension) {
-		.width = HOUSE_WIDTH,
-		.height = HOUSE_HEIGHT,
-	});
-	add_Colors(colors, *p_entityCount, (c_color) {
-		.red = 100,
-		.green = 100,
-		.blue = 100
-	});
-	add_Lights(lights, *p_entityCount, (c_light) {
-		.width = 600,
-		.height = 600,
-		.brightness = .6f,
-		.red = 250,
-		.green = 250,
-		.blue = 200,
-	});
-	printf("<HOUSE_SPAWNED> %zu", *p_entityCount);
-	(*p_entityCount)++;
+	add_Oxygenators(oxygenators, *p_entity_count, true);
+	add_Positions(positions, *p_entity_count, (c_position) {
+			.x = (p_display_bounds->w / 2) - (HOUSE_WIDTH / 2),
+			.y = (p_display_bounds->h / 2) - (HOUSE_HEIGHT / 2),
+			});
+	add_Dimensions(dimensions, *p_entity_count, (c_dimension) {
+			.width = HOUSE_WIDTH,
+			.height = HOUSE_HEIGHT,
+			});
+	add_Colors(colors, *p_entity_count, (c_color) {
+			.red = 100,
+			.green = 100,
+			.blue = 100
+			});
+	add_Lights(lights, *p_entity_count, (c_light) {
+			.width = 600,
+			.height = 600,
+			.brightness = .6f,
+			.red = 250,
+			.green = 250,
+			.blue = 200,
+			});
+	printf("<HOUSE_SPAWNED> %zu", *p_entity_count);
+	(*p_entity_count)++;
 }
 
-void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_entityCount, Oxygenators* oxygenators, Healths* healths, bool player_controlled[], Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits, DistanceConstraints* distance_constraints, DamageColliders* damage_colliders, Attachments* attachments, Lights* lights, Batteries* batteries) {
+void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_entity_count, Oxygenators* oxygenators, Healths* healths, Players* players, Sounds* sounds, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Containers* containers, Sprites* sprites, OxygenConsumers* oxygen_consumers, OxygenContainers* oxygen_containers, Orbits* orbits, DistanceConstraints* distance_constraints, DamageColliders* damage_colliders, Attachments* attachments, Lights* lights, Batteries* batteries) {
 	*p_game_state = RUNNING;
 	for(size_t i = 0; i < MAX_ENTITY_COUNT; i++) {
-		*p_entityCount = 0;
+		*p_entity_count = 0;
 		oxygenators->count = 0;
 		healths->count = 0;
 		sounds->count = 0;
@@ -819,95 +855,180 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 		attachments->count = 0;
 		lights->count = 0;
 		batteries->count = 0;
+		players->count = 0;
 	}
 
-	add_Sounds(sounds, *p_entityCount, (c_sound){ fname: "background-music.wav", repeat: true });
-	c_sound* background_sound = get_Sounds(sounds, *p_entityCount);
+	add_Sounds(sounds, *p_entity_count, (c_sound){ fname: "background-music.wav", repeat: true });
+	c_sound* background_sound = get_Sounds(sounds, *p_entity_count);
 	if (!init_sound(background_sound)) {
 		SDL_Log("Failed to initialize sound: %s", SDL_GetError());
 	}
 
-	spawn_house(p_entityCount, oxygenators, positions, dimensions, colors, lights, p_display_bounds);
+	spawn_house(p_entity_count, oxygenators, positions, dimensions, colors, lights, p_display_bounds);
 	SDL_FRect character_spawn_bounds;
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
-	
+
 	// TODO: replace SDLF_Rect with this
 	c_dimension spawn_dimensions = (c_dimension) {
 		.width = character_spawn_bounds.w,
-		.height = character_spawn_bounds.h,
+			.height = character_spawn_bounds.h,
 	};
 
-	spawn_characters(10, p_entityCount, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
-	spawn_player(p_entityCount, player_controlled, healths, containers, positions, dimensions, sprites, oxygen_consumers, lights, &character_spawn_bounds);
-	spawn_o2_tanks(15, p_entityCount, positions, dimensions, colors, containables, sprites, oxygen_containers, &character_spawn_bounds);
-	spawn_sharks(10, p_entityCount, orbits, colors, positions, dimensions, distance_constraints, damage_colliders, &spawn_dimensions);
-	spawn_outside_lights(5, p_entityCount, positions, dimensions, colors, lights, sprites, &spawn_dimensions);
-	spawn_batteries(3, p_entityCount, positions, dimensions, lights, sprites, batteries, &spawn_dimensions);
+	spawn_characters(10, p_entity_count, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
+	spawn_player(p_entity_count, players, healths, containers, positions, dimensions, sprites, oxygen_consumers, lights, &character_spawn_bounds);
+	spawn_o2_tanks(15, p_entity_count, positions, dimensions, colors, containables, sprites, oxygen_containers, &character_spawn_bounds);
+	spawn_sharks(10, p_entity_count, orbits, colors, positions, dimensions, distance_constraints, damage_colliders, &spawn_dimensions);
+	spawn_outside_lights(5, p_entity_count, positions, dimensions, colors, lights, sprites, &spawn_dimensions);
+	spawn_batteries(3, p_entity_count, positions, dimensions, lights, sprites, batteries, &spawn_dimensions);
 }
 
-void update_player(long *p_time_since_last_tick, size_t *p_entityCount, bool player_controlled[], Positions* positions, Healths* healths, enum GameState* p_game_state, bool left, bool right, bool up, bool down) {
+void press_button(enum ButtonBit button_bit, ButtonStates* p_button_states) {
+	if (!(p_button_states->held & button_bit)) {
+		p_button_states->pressed |= button_bit;
+		p_button_states->held |= button_bit;
+	}
+}
+
+void release_button(enum ButtonBit button_bit, ButtonStates* p_button_states) {
+	if (p_button_states->held & button_bit) {
+		p_button_states->released |= button_bit;
+		p_button_states->held &= ~button_bit;
+	}
+}
+
+// TODO: switch on InputMap instead of on direct on SDL codes
+void controller_feed_sdl(ButtonStates* p_button_states, SDL_Event* p_event) {
+	switch(p_event->type) {
+		case SDL_EVENT_KEY_DOWN:
+			switch(p_event->key.scancode) {
+				case SDL_SCANCODE_A:
+					press_button(BTN_LEFT, p_button_states);
+					break;
+				case SDL_SCANCODE_S:
+					press_button(BTN_DOWN, p_button_states);
+					break;
+				case SDL_SCANCODE_D:
+					press_button(BTN_RIGHT, p_button_states);
+					break;
+				case SDL_SCANCODE_W:
+					press_button(BTN_UP, p_button_states);
+					break;
+				case SDL_SCANCODE_Q:
+					press_button(BTN_QUIT, p_button_states);
+					break;
+				case SDL_SCANCODE_ESCAPE:
+					press_button(BTN_BACK, p_button_states);
+					break;
+				default:
+					break;
+			}
+			break;
+		case SDL_EVENT_KEY_UP:
+			switch(p_event->key.scancode) {
+				case SDL_SCANCODE_A:
+					release_button(BTN_LEFT, p_button_states);
+					break;
+				case SDL_SCANCODE_S:
+					release_button(BTN_DOWN, p_button_states);
+					break;
+				case SDL_SCANCODE_D:
+					release_button(BTN_RIGHT, p_button_states);
+					break;
+				case SDL_SCANCODE_W:
+					release_button(BTN_UP, p_button_states);
+					break;
+				case SDL_SCANCODE_ESCAPE:
+					release_button(BTN_BACK, p_button_states);
+					break;
+				default:
+					break;
+			}
+	}
+}
+
+void update_player(long *p_time_since_last_tick, size_t *p_entity_count, enum GameState* p_game_state, ButtonStates* button_states, Players* players, Positions* positions, Healths* healths) {
+
 	float pixels_per_foot = 50.0f;
 	float fps = 10.0f;
 	float fpns = fps / NANO_SECONDS_PER_SECOND;
 	float delta = ((*p_time_since_last_tick) * fpns) * pixels_per_foot;
 
 	bool any_living_players = false;
-	for(size_t i = 0; i < *p_entityCount; i++) {
-		if(player_controlled[i] == true) {
-			c_position* p_position = get_Positions(positions, i);
-			assert(p_position != NULL);
-			c_health* p_health = get_Healths(healths, i);
-			if (p_health != NULL && *p_health > 0) {
-				any_living_players = true;
-			}
+	for(size_t i = 0; i < players->count; i++) {
+		c_player* p_player = &players->data[i];
 
-			if(left) {
-				p_position->x -= delta;
-			}
-			if(right) {
-				p_position->x += delta;
-			}
-			if(up) {
-				p_position->y -= delta;
-			}
-			if(down) {
-				p_position->y += delta;
-			}
+		if (p_player->type != CTRL_LOCAL) continue;
+
+		p_player->button_states = *button_states;
+
+		switch (*p_game_state) {
+			case RUNNING: {
+					      Entity player_entity = players->entities[i];
+					      c_position* p_position = get_Positions(positions, player_entity);
+					      assert(p_position != NULL);
+					      c_health* p_health = get_Healths(healths, player_entity);
+					      if (p_health != NULL && *p_health > 0) {
+						      any_living_players = true;
+					      }
+
+					      if(p_player->button_states.held & BTN_LEFT) {
+						      p_position->x -= delta;
+					      }
+					      if(p_player->button_states.held & BTN_RIGHT) {
+						      p_position->x += delta;
+					      }
+					      if(p_player->button_states.held & BTN_UP) {
+						      p_position->y -= delta;
+					      }
+					      if(p_player->button_states.held & BTN_DOWN) {
+						      p_position->y += delta;
+					      }
+					      if(p_player->button_states.pressed & BTN_BACK) {
+						      *p_game_state = PAUSED;
+					      }
+					      break;
+				      }
+			case PAUSED: {
+					     if (p_player->button_states.pressed & BTN_BACK) *p_game_state = RUNNING;
+					     if (p_player->button_states.held & BTN_QUIT) *p_game_state = QUIT;
+					     break;
+				     }
+			default: break;
+				 *p_game_state = any_living_players ? *p_game_state : GAME_OVER;
 		}
 	}
-	*p_game_state = any_living_players ? RUNNING : GAME_OVER;
 }
 
 void sys_orbit_position(long* p_time_since_last_tick_ns, Orbits* orbits, Positions* positions) {
-    float delta_time = (float)(*p_time_since_last_tick_ns) / NANO_SECONDS_PER_SECOND; // ns → s
+	float delta_time = (float)(*p_time_since_last_tick_ns) / NANO_SECONDS_PER_SECOND; // ns → s
 
-    for (uint32_t i = 0; i < orbits->count; i++) {
-        Entity		orbit_entity = orbits->entities[i];
-        c_orbit*    	p_orbit      = &orbits->data[i];
-        c_position* 	p_position   = get_Positions(positions, orbit_entity);
-        if (p_position == NULL || p_orbit == NULL) continue;
+	for (uint32_t i = 0; i < orbits->count; i++) {
+		Entity		orbit_entity = orbits->entities[i];
+		c_orbit*    	p_orbit      = &orbits->data[i];
+		c_position* 	p_position   = get_Positions(positions, orbit_entity);
+		if (p_position == NULL || p_orbit == NULL) continue;
 
-        // advance phase
-        p_orbit->phase += TWO_PI * p_orbit->freq_hz * delta_time;
-        if (p_orbit->phase >= TWO_PI)      p_orbit->phase -= TWO_PI;
-        else if (p_orbit->phase < 0.0f)    p_orbit->phase += TWO_PI;
+		// advance phase
+		p_orbit->phase += TWO_PI * p_orbit->freq_hz * delta_time;
+		if (p_orbit->phase >= TWO_PI)      p_orbit->phase -= TWO_PI;
+		else if (p_orbit->phase < 0.0f)    p_orbit->phase += TWO_PI;
 
-        // point on axis-aligned ellipse (local space)
-        float phase_cos = cosf(p_orbit->phase);
-        float phase_sin = sinf(p_orbit->phase);
-        float orbit_local_x   = p_orbit->amp_x * phase_cos;
-        float orbit_local_y   = p_orbit->amp_y * phase_sin;
+		// point on axis-aligned ellipse (local space)
+		float phase_cos = cosf(p_orbit->phase);
+		float phase_sin = sinf(p_orbit->phase);
+		float orbit_local_x   = p_orbit->amp_x * phase_cos;
+		float orbit_local_y   = p_orbit->amp_y * phase_sin;
 
-        // rotate ellipse by rot_rad (set rot_rad = 0 for none)
-        float cos_rotation = cosf(p_orbit->rot_rad);
-        float sin_rotation = sinf(p_orbit->rot_rad);
-        float rotated_x =  cos_rotation * orbit_local_x - sin_rotation * orbit_local_y;
-        float rotated_y =  sin_rotation * orbit_local_x + cos_rotation * orbit_local_y;
+		// rotate ellipse by rot_rad (set rot_rad = 0 for none)
+		float cos_rotation = cosf(p_orbit->rot_rad);
+		float sin_rotation = sinf(p_orbit->rot_rad);
+		float rotated_x =  cos_rotation * orbit_local_x - sin_rotation * orbit_local_y;
+		float rotated_y =  sin_rotation * orbit_local_x + cos_rotation * orbit_local_y;
 
-        // place at anchor
-        p_position->x = p_orbit->base_x + rotated_x;
-        p_position->y = p_orbit->base_y + rotated_y;
-    }
+		// place at anchor
+		p_position->x = p_orbit->base_x + rotated_x;
+		p_position->y = p_orbit->base_y + rotated_y;
+	}
 }
 
 void sys_containables_container_position_dimension_sprite_sound_attachment(Containables* containables, Containers* containers, Positions* positions, Dimensions* dimensions, Sprites* sprites, Sounds* sounds, Attachments* attachments) {
@@ -1118,11 +1239,11 @@ void sys_position_dimension_color(Positions* positions, Dimensions* dimensions, 
 
 		SDL_SetRenderDrawColor(p_sdl_renderer, p_color->red, p_color->green, p_color->blue, SDL_ALPHA_OPAQUE);
 		SDL_RenderFillRect(p_sdl_renderer, &(SDL_FRect) {
-			.x = p_position->x,
-			.y = p_position->y,
-			.w = p_dimension->width,
-			.h = p_dimension->height
-		});
+				.x = p_position->x,
+				.y = p_position->y,
+				.w = p_dimension->width,
+				.h = p_dimension->height
+				});
 	}
 }
 
@@ -1149,7 +1270,7 @@ int main() {
 	SDL_Window *p_sdl_window;
 	SDL_Renderer *p_sdl_renderer;
 
-	size_t entityCount = 0;
+	size_t entity_count = 0;
 
 	if (!SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
 		SDL_Log("Couldn't initialize SDL: %s", SDL_GetError());
@@ -1202,8 +1323,6 @@ int main() {
 		return SDL_APP_FAILURE;
 	}
 
-	// components
-	bool player_controlled[MAX_ENTITY_COUNT] = {};
 	// components_v2
 	Containables containables = {0};
 	Containers containers = {0};
@@ -1222,6 +1341,7 @@ int main() {
 	DamageColliders damage_colliders = {0};
 	Lights lights = {0};
 	Batteries batteries = {0};
+	Players players = {0};
 
 	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
 	init_bmp("aquanaut.bmp", &aquanaut_sprite, p_sdl_renderer);
@@ -1237,12 +1357,7 @@ int main() {
 			);
 	SDL_SetTextureBlendMode(p_lightmap, SDL_BLENDMODE_ADD);
 
-	init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments, &lights, &batteries);
-
-	bool player_left = false;
-	bool player_right = false;
-	bool player_up = false;
-	bool player_down = false;
+	init(&game_state, &displayBounds, &entity_count, &oxygenators, &healths, &players, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments, &lights, &batteries);
 
 	struct timespec start, end;
 	long time_since_last_tick = 0;
@@ -1255,12 +1370,12 @@ int main() {
 	SDL_FRect dst;
 	const float scale = 2.0f;
 
-	bool running = true;
-	while(running) {
+	ButtonStates button_states = {0};
+
+	while(game_state != QUIT) {
 		timespec_get(&end, TIME_UTC);
 		time_since_last_tick = ((end.tv_sec - start.tv_sec) * NANO_SECONDS_PER_SECOND ) + (end.tv_nsec - start.tv_nsec);
 		timespec_get(&start, TIME_UTC);
-		//printf("NS SINCE LAST TICK: %ld\n", time_since_last_tick);
 
 		SDL_SetRenderDrawColor(p_sdl_renderer, 30, 10, 100, 0x00);
 		SDL_RenderClear(p_sdl_renderer);
@@ -1285,6 +1400,13 @@ int main() {
 
 		sys_sound(&sounds);
 
+		SDL_Event e;
+		button_states.pressed = 0u;
+		button_states.released = 0u;
+		while (SDL_PollEvent(&e)) {
+			controller_feed_sdl(&button_states, &e);
+		}
+
 		switch(game_state) {
 
 			case RUNNING: {
@@ -1293,7 +1415,7 @@ int main() {
 					      sys_health_oxygen_consumer_oxygen_container_container(&time_since_last_tick, &healths, &oxygen_consumers, &oxygen_containers, &containers);
 
 					      sys_oxygenator_position_dimension_oxygen_container_sound(&time_since_last_tick, &oxygenators, &positions, &dimensions, &oxygen_containers, &sounds);
-					      update_player(&time_since_last_tick, &entityCount, player_controlled, &positions, &healths, &game_state, player_left, player_right, player_up, player_down);
+					      update_player(&time_since_last_tick, &entity_count, &game_state, &button_states, &players, &positions, &healths);
 					      sys_containables_container_position_dimension_sprite_sound_attachment(&containables, &containers, &positions, &dimensions, &sprites, &sounds, &attachments);
 					      sys_orbit_position(&time_since_last_tick, &orbits, &positions); 
 
@@ -1301,70 +1423,14 @@ int main() {
 
 					      sys_damage_collider_health_position_dimension_sound(&time_since_last_tick, &damage_colliders, &healths, &positions, &dimensions, &sounds);
 
-					      SDL_Event event;
-					      while(SDL_PollEvent(&event)) {
-						      switch(event.type) {
-							      case SDL_EVENT_KEY_DOWN: 
-								      // TODO: add proper logging with levels like trace/debug
-								      // printf("detected a keyboard event. %d\n", event.key.key);
-								      switch(event.key.key) {
-									      case SDLK_Q:
-										      running = false;
-										      break;
-									      case SDLK_LEFT:
-										      printf("LEFT\n");
-										      player_left = true;
-										      break;
-									      case SDLK_RIGHT:
-										      printf("RIGHT\n");
-										      player_right = true;
-										      break;
-									      case SDLK_UP:
-										      printf("UP\n");
-										      player_up = true;
-										      break;
-									      case SDLK_DOWN:
-										      printf("DOWN\n");
-										      player_down = true;
-										      break;
-									      case SDLK_ESCAPE:
-										      game_state = PAUSED;
-										      break;
-								      }
-								      break;
-							      case SDL_EVENT_KEY_UP: 
-								      // TODO: add proper logging with levels like trace/debug
-								      switch(event.key.key) {
-									      case SDLK_LEFT:
-										      player_left = false;
-										      break;
-									      case SDLK_RIGHT:
-										      player_right = false;
-										      break;
-									      case SDLK_UP:
-										      player_up = false;
-										      break;
-									      case SDLK_DOWN:
-										      player_down = false;
-										      break;
-								      }
-								      break;
-							      case SDL_EVENT_QUIT:
-								      printf("detected a quit event.\n");
-								      running = false;
-								      break;
-							      default: 
-								      printf("detected an unhandled event.\n");
-								      break;
-						      }
-					      }
 					      break;
 				      }
 			case PAUSED: {
+					     update_player(&time_since_last_tick, &entity_count, &game_state, &button_states, &players, &positions, &healths);
 					     /* Create the text */
 					     SDL_Texture *pause_text_texture = NULL;
 					     SDL_Surface *pause_text;
-					     pause_text = TTF_RenderText_Blended(font, "PAUSED", 0, color);
+					     pause_text = TTF_RenderText_Blended(font, "PAUSED (press 'q' to exit)", 0, color);
 					     if (pause_text) {
 						     pause_text_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, pause_text);
 						     SDL_DestroySurface(text);
@@ -1380,54 +1446,37 @@ int main() {
 					     dst.x = ((w / scale) - dst.w) / 2;
 					     dst.y = ((h / scale) - dst.h) / 2;
 					     SDL_RenderTexture(p_sdl_renderer, pause_text_texture, NULL, &dst);
-
-					     SDL_Event event;
-					     while(SDL_PollEvent(&event)) {
-						     switch(event.type) {
-							     case SDL_EVENT_KEY_DOWN: 
-								     // TODO: add proper logging with levels like trace/debug
-								     // printf("detected a keyboard event. %d\n", event.key.key);
-								     switch(event.key.key) {
-									     case SDLK_ESCAPE:
-										     game_state = RUNNING;
-										     break;
-									     case SDLK_Q:
-										     running = false;
-										     break;
-								     }
-						     }
-					     }
 					     break;
 				     }
 			case GAME_OVER: {
-					   SDL_Texture *text_texture = NULL;
-					   SDL_Surface *text;
-					   text = TTF_RenderText_Blended(font, "GAME OVER", 0, color);
-					   if (text) {
-						   text_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, text);
-						   SDL_DestroySurface(text);
-					   }
-					   if (!text_texture) {
-						   SDL_Log("Couldn't create text: %s\n", SDL_GetError());
-						   return SDL_APP_FAILURE;
-					   }
+						SDL_Texture *text_texture = NULL;
+						SDL_Surface *text;
+						text = TTF_RenderText_Blended(font, "GAME OVER", 0, color);
+						if (text) {
+							text_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, text);
+							SDL_DestroySurface(text);
+						}
+						if (!text_texture) {
+							SDL_Log("Couldn't create text: %s\n", SDL_GetError());
+							return SDL_APP_FAILURE;
+						}
 
-					   SDL_GetRenderOutputSize(p_sdl_renderer, &w, &h);
-					   SDL_SetRenderScale(p_sdl_renderer, 20, 20);
-					   SDL_GetTextureSize(text_texture, &dst.w, &dst.h);
-					   dst.x = ((w / 20) - dst.w) / 2;
-					   dst.y = ((h / 20) - dst.h) / 2;
-					   SDL_RenderTexture(p_sdl_renderer, text_texture, NULL, &dst);
-					   SDL_SetRenderScale(p_sdl_renderer, scale, scale);
+						SDL_GetRenderOutputSize(p_sdl_renderer, &w, &h);
+						SDL_SetRenderScale(p_sdl_renderer, 20, 20);
+						SDL_GetTextureSize(text_texture, &dst.w, &dst.h);
+						dst.x = ((w / 20) - dst.w) / 2;
+						dst.y = ((h / 20) - dst.h) / 2;
+						SDL_RenderTexture(p_sdl_renderer, text_texture, NULL, &dst);
+						SDL_SetRenderScale(p_sdl_renderer, scale, scale);
 
-					   SDL_Event event;
-					   while(SDL_PollEvent(&event)) {
-						   switch(event.type) {
-							   case SDL_EVENT_KEY_DOWN: 
-								   init(&game_state, &displayBounds, &entityCount, &oxygenators, &healths, player_controlled, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments, &lights, &batteries);
-						   }
-					   }
-					   break;
+						SDL_Event event;
+						while(SDL_PollEvent(&event)) {
+							switch(event.type) {
+								case SDL_EVENT_KEY_DOWN: 
+									init(&game_state, &displayBounds, &entity_count, &oxygenators, &healths, &players, &sounds, &positions, &dimensions, &colors, &containables, &containers, &sprites, &oxygen_consumers, &oxygen_containers, &orbits, &distance_constraints, &damage_colliders, &attachments, &lights, &batteries);
+							}
+						}
+						break;
 					}
 			default: { 
 					 printf("WARNING: Unknown GameState detected: %d\n", game_state); 
@@ -1443,21 +1492,41 @@ int main() {
 			time_since_last_fps_calc = 0;
 		}
 
+		SDL_SetRenderDrawColor(p_sdl_renderer, 255, 0, 255, SDL_ALPHA_OPAQUE);
+
 		int length = snprintf(NULL, 0, "FPS: %u", fps);
 		char* str = malloc(length + 1);
 		snprintf(str, length + 1, "FPS: %u", fps);
-
-		int entityCountLength = snprintf(NULL, 0, "ENTITY COUNT: %zu", entityCount);
-		char* entityCountStr = malloc(entityCountLength + 1);
-		snprintf(entityCountStr, entityCountLength + 1, "ENTITY_COUNT: %zu", entityCount);
-
-		SDL_SetRenderDrawColor(p_sdl_renderer, 255, 0, 255, SDL_ALPHA_OPAQUE);
 		SDL_RenderDebugText(p_sdl_renderer, 10, 10, str);
-		SDL_RenderDebugText(p_sdl_renderer, 10, 20, entityCountStr);
+		free(str);
+
+		length = snprintf(NULL, 0, "ENTITY COUNT: %zu", entity_count);
+		str = malloc(length + 1);
+		snprintf(str, length + 1, "ENTITY_COUNT: %zu", entity_count);
+		SDL_RenderDebugText(p_sdl_renderer, 10, 20, str);
+		free(str);
+
+		length = snprintf(NULL, 0, "BUTTONS HELD: %u", button_states.held);
+		str = malloc(length + 1);
+		snprintf(str, length + 1, "BUTTONS HELD: %u", button_states.held);
+		SDL_RenderDebugText(p_sdl_renderer, 10, 30, str);
+		free(str);
+
+		length = snprintf(NULL, 0, "BUTTONS PRESSED: %u", button_states.pressed);
+		str = malloc(length + 1);
+		snprintf(str, length + 1, "BUTTONS PRESSED: %u", button_states.pressed);
+		SDL_RenderDebugText(p_sdl_renderer, 10, 40, str);
+		free(str);
+
+		length = snprintf(NULL, 0, "BUTTONS RELEASED: %u", button_states.released);
+		str = malloc(length + 1);
+		snprintf(str, length + 1, "BUTTONS RELEASED: %u", button_states.released);
+		SDL_RenderDebugText(p_sdl_renderer, 10, 50, str);
+		free(str);
+
 		SDL_RenderPresent(p_sdl_renderer);
 
 	}
-	cleanup(p_sdl_window);
 	return 0;
 }
 
