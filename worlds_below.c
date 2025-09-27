@@ -409,7 +409,7 @@ void sys_container_player_position_dimension_sprite(c_dimension* p_display_bound
 				p_inactive_container->containables[p_inactive_container->count] = item_to_move;
 				p_inactive_container->count++;
 				c_attachment* p_item_attachment = get_Attachments(attachments, item_to_move);
-				p_item_attachment->parent = p_player_container_session->session_container_is_active ? p_player_container_session->container : player_entity;
+				p_item_attachment->parent = p_player_container_session->session_container_is_active ? player_entity : p_player_container_session->container;
 
 				size_t elements_to_shift = p_active_container->count - active_slot_index - 1;
 				if (elements_to_shift > 0) {
@@ -950,7 +950,7 @@ void spawn_characters(uint32_t spawnCount, size_t *p_entity_count, Healths* heal
 		add_Healths(healths, entity, MAX_HEALTH);
 		add_OxygenConsumers(oxygen_consumers, entity, 2.5);
 		add_Containers(containers, entity, (c_container) { .containables = {}, .count = 0 });
-		printf("<CHARACTER_SPAWNED> %zu", *p_entity_count);
+		printf("<CHARACTER_SPAWNED> %zu\n", *p_entity_count);
 		(*p_entity_count)++;
 	}
 }
@@ -1470,7 +1470,7 @@ void sys_attachment_position(Attachments* attachments, Positions* positions) {
 		c_position* p_attachment_position = get_Positions(positions, e);
 
 		c_position* p_parent_position =  get_Positions(positions, p_attachment->parent);
-		if (p_attachment_position != NULL || p_parent_position != NULL) {
+		if (p_attachment_position != NULL && p_parent_position != NULL) {
 			p_attachment_position->x = p_parent_position->x + p_attachment->offset_x;
 			p_attachment_position->y = p_parent_position->y + p_attachment->offset_y;
 		}
