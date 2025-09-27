@@ -59,7 +59,18 @@ enum ButtonBit {
 	BTN_INTERACT 		= 1u << 4,
 	BTN_BACK	 	= 1u << 5,
 	BTN_QUIT	 	= 1u << 6,
+	BTN_INVENTORY	 	= 1u << 7,
+	BTN_TRANSFER_SELECTION	= 1u << 8,
+	BTN_TAB			= 1u << 9,
 };
+
+typedef struct RenderItem {
+	SDL_Texture* texture;
+	SDL_FRect rect;
+} RenderItem;
+
+RenderItem container_render_item;
+RenderItem container_slot_selected_render_item;
 
 // =======================================================================================
 //  ┌─┐┌─┐┌┬┐┌─┐┌─┐┌┐┌┌─┐┌┐┌┌┬┐┌─┐
@@ -158,34 +169,43 @@ typedef struct c_player {
 	ButtonStates button_states;
 	float delta_x;
 	float delta_y;
+	Entity open_container;
 } c_player;
+typedef struct c_container_session {
+	Entity container;
+	bool session_container_is_active;
+	uint8_t active_slot_index;
+} c_container_session;
 
-COMPONENT(Colors, c_color)
 	// TODO: Understand the unnecesarry overhead of using the ecs macro for
 	// these simple bool-type flags vs just an array of entity pointers
+	COMPONENT(Attachments, c_attachment)
+	COMPONENT(Batteries, c_battery)
+	COMPONENT(Colors, c_color)
 	COMPONENT(Containables, c_containable)
 	COMPONENT(Containers, c_container)
+	COMPONENT(ContainerSessions, c_container_session)
+	COMPONENT(DamageColliders, c_damage_collider)
 	COMPONENT(Dimensions, c_dimension)
 	COMPONENT(DistanceConstraints, c_distance_constraint)
 	COMPONENT(Healths, c_health)
+	COMPONENT(Lights, c_light)
+	COMPONENT(Orbits, c_orbit)
 	COMPONENT(Oxygenators, c_oxygenator)
 	COMPONENT(OxygenConsumers, c_oxygen_consumer)
 	COMPONENT(OxygenContainers, c_oxygen_container)
+	COMPONENT(Players, c_player)
 	COMPONENT(Positions, c_position)
 	COMPONENT(Sounds, c_sound)
 	COMPONENT(Sprites, c_sprite)
-	COMPONENT(Attachments, c_attachment)
-	COMPONENT(Orbits, c_orbit)
-	COMPONENT(DamageColliders, c_damage_collider)
-	COMPONENT(Lights, c_light)
-	COMPONENT(Batteries, c_battery)
-COMPONENT(Players, c_player)
 
 	// Resources: Static assets that may be reused across components/systems
 	static c_sprite o2_tank_sprite;
 	static c_sprite aquanaut_sprite;
 	static c_sprite light_sprite;
 	static c_sprite battery_sprite;
+	static c_sprite container_sprite;
+	static c_sprite container_slot_selected_sprite;
 
 	// =======================================================================================
 	//  ┌─┐┬ ┬┌─┐┌┬┐┌─┐┌┬┐┌─┐
@@ -225,6 +245,18 @@ COMPONENT(Players, c_player)
 		return true;
 	}
 
+void add_render_item(RenderItem render_item, RenderItem* p_render_list, uint32_t* p_render_list_count, uint32_t* p_render_list_capacity) {
+	if (*p_render_list_capacity - *p_render_list_count == 0) {
+		(*p_render_list_capacity) *= 2;
+		RenderItem* new_list = malloc(sizeof(RenderItem) * (*p_render_list_capacity) * 2);
+		memcpy(new_list, p_render_list, *p_render_list_count);
+		free(p_render_list);
+		p_render_list = new_list;
+	}
+	p_render_list[*p_render_list_count] = render_item;
+	(*p_render_list_count)++;
+}
+
 void generate_light_sprite(SDL_Texture** p_texture, SDL_Renderer* p_sdl_renderer)
 {
 	const uint32_t width  = 400;
@@ -245,7 +277,6 @@ void generate_light_sprite(SDL_Texture** p_texture, SDL_Renderer* p_sdl_renderer
 	const float pad     = 2.0f;                            // 2px fully transparent border
 	const float maxr    = (minSide * 0.5f) - pad;
 
-	// SDL3 wants PixelFormatDetails for SDL_MapRGBA
 	const SDL_PixelFormatDetails* fmt =
 		SDL_GetPixelFormatDetails(SDL_PIXELFORMAT_RGBA8888);
 
@@ -314,7 +345,7 @@ static bool init_sound(c_sound* sound) {
 bool overlaps_pos_dim(c_position* p_position_a, c_dimension* p_dimension_a, c_position* p_position_b, c_dimension* p_dimension_b) {
 	c_dimension default_dimension = (c_dimension) {
 		.width = 1,
-			.height = 1
+		.height = 1
 	};
 	if (p_dimension_a == NULL) {
 		p_dimension_a = &default_dimension;
@@ -334,6 +365,158 @@ bool overlaps_pos_dim(c_position* p_position_a, c_dimension* p_dimension_a, c_po
 
 static inline float clampf(float v, float lo, float hi) {
 	return (v < lo) ? lo : (v > hi) ? hi : v;
+}
+
+void sys_container_player_position_dimension_sprite(c_dimension* p_display_bounds, RenderItem* p_render_list, uint32_t *p_render_list_count, uint32_t *p_render_list_capacity, Containers* containers, Players* players, Positions* positions, Dimensions* dimensions, Sprites* sprites, ContainerSessions* container_sessions, Attachments* attachments) {
+	for (size_t i = 0; i < players->count; i++) {
+		Entity player_entity = players->entities[i];
+		c_player* p_player = &players->data[i];
+		c_position* p_player_position = get_Positions(positions, player_entity);
+		c_dimension* p_player_dimension = get_Dimensions(dimensions, player_entity);
+
+		if (p_player_position == NULL || p_player_dimension == NULL) continue;
+
+		c_container_session* p_player_container_session = get_ContainerSessions(container_sessions, player_entity);
+		c_container* p_player_container = get_Containers(containers, player_entity);
+
+		bool container_is_open = p_player_container_session != NULL;
+
+		if(container_is_open) {
+			c_container* p_target_container = get_Containers(containers, p_player_container_session->container);
+
+			if(p_player->button_states.pressed & BTN_RIGHT) {
+				p_player_container_session->active_slot_index ++;
+			}
+			if(p_player->button_states.pressed & BTN_LEFT) {
+				p_player_container_session->active_slot_index --;
+			}
+			if(p_player->button_states.pressed & BTN_UP) {
+				p_player_container_session->active_slot_index -= 5;
+			}
+			if(p_player->button_states.pressed & BTN_DOWN) {
+				p_player_container_session->active_slot_index += 5;
+			}
+			if(p_player->button_states.pressed & BTN_TAB) {
+				p_player_container_session->session_container_is_active = !p_player_container_session->session_container_is_active;
+			}
+			p_player_container_session->active_slot_index %= CONTAINER_SIZE;
+			uint8_t active_slot_index = p_player_container_session->active_slot_index;
+
+			c_container* p_active_container = p_player_container_session->session_container_is_active ? p_target_container: p_player_container;
+			c_container* p_inactive_container = !p_player_container_session->session_container_is_active ? p_target_container: p_player_container;
+			if(active_slot_index < p_active_container->count && p_inactive_container->count <= CONTAINER_SIZE && (p_player->button_states.pressed & BTN_TRANSFER_SELECTION)) {
+				Entity item_to_move = p_active_container->containables[active_slot_index];
+				p_inactive_container->containables[p_inactive_container->count] = item_to_move;
+				p_inactive_container->count++;
+				c_attachment* p_item_attachment = get_Attachments(attachments, item_to_move);
+				p_item_attachment->parent = p_player_container_session->session_container_is_active ? p_player_container_session->container : player_entity;
+
+				size_t elements_to_shift = p_active_container->count - active_slot_index - 1;
+				if (elements_to_shift > 0) {
+					memmove(&p_active_container->containables[active_slot_index],
+							&p_active_container->containables[active_slot_index + 1],
+							elements_to_shift * sizeof p_active_container->containables[0]);
+				}
+				p_active_container->count--;
+				break;
+			}
+		}
+		if(p_player->button_states.pressed & BTN_INTERACT) {
+			if (container_is_open) {
+				remove_ContainerSessions(container_sessions, player_entity);
+				continue;
+			} else {
+				for (size_t j = 0; j < containers->count; j++) {
+					Entity target_entity = containers->entities[j];
+					if (target_entity == player_entity) continue;
+
+					c_position* p_target_position = get_Positions(positions, target_entity);
+					c_dimension* p_target_dimension = get_Dimensions(dimensions, target_entity);
+
+					if (p_target_position == NULL || p_target_dimension == NULL) continue;
+					if (overlaps_pos_dim(p_target_position, p_target_dimension, p_player_position, p_player_dimension)) {
+						c_container_session player_container_session = (c_container_session) {
+							.container = target_entity,
+							.active_slot_index = 0,
+							.session_container_is_active = 0,
+						};
+						add_ContainerSessions(container_sessions, player_entity, player_container_session);
+						break;
+					}
+				}
+			}
+		}
+
+		if (container_is_open) {
+			c_container* p_target_container = get_Containers(containers, p_player_container_session->container);
+			float container_display_width = p_display_bounds->width / 2;
+			float container_display_height = p_display_bounds->height / 2;
+
+			uint8_t columns = 5;
+			uint8_t rows = 2;
+			uint8_t padding = 10;
+			float container_slot_width = (container_display_width / columns) - padding;
+			float container_slot_height = (container_display_height / rows) - padding;
+			for (uint8_t i = 0; i < CONTAINER_SIZE; i++) {
+				RenderItem container_slot_render_item = (RenderItem) {
+					.texture = container_sprite,
+					.rect = (SDL_FRect) {
+						.x = (i % columns) * container_slot_width,
+						.y = (i / columns) * container_slot_height,
+						.w = container_slot_width,
+						.h = container_slot_height,
+					}
+				};
+				add_render_item(container_slot_render_item, p_render_list, p_render_list_count, p_render_list_capacity);
+				container_slot_render_item.rect.x += container_display_width;
+				add_render_item(container_slot_render_item, p_render_list, p_render_list_count, p_render_list_capacity);
+
+				if (i == p_player_container_session->active_slot_index) {
+					RenderItem container_slot_selected_render_item = (RenderItem) {
+						.texture = container_slot_selected_sprite,
+							.rect = (SDL_FRect) {
+							.x = (i % columns) * container_slot_width + (p_player_container_session->session_container_is_active * container_display_width),
+							.y = (i / columns) * container_slot_height,
+							.w = container_slot_width,
+							.h = container_slot_height,
+						}
+					};
+					add_render_item(container_slot_selected_render_item, p_render_list, p_render_list_count, p_render_list_capacity);
+				}
+
+				if (i < p_target_container->count) {
+					c_sprite* p_sprite = get_Sprites(sprites, p_target_container->containables[i]);
+					float item_width = container_slot_width / 2;
+					float item_height = container_slot_height / 2;
+					RenderItem container_slot_item_render_item = (RenderItem) {
+						.texture = *p_sprite,
+						.rect = (SDL_FRect) {
+							.x = ((i % columns) * container_slot_width) + (item_width / 2) + container_display_width,
+							.y = ((i / columns) * container_slot_height) + (item_height / 2),
+							.w = item_width,
+							.h = item_height,
+						}
+					};
+					add_render_item(container_slot_item_render_item, p_render_list, p_render_list_count, p_render_list_capacity);
+				}
+				if (i < p_player_container->count) {
+					c_sprite* p_sprite = get_Sprites(sprites, p_player_container->containables[i]);
+					float item_width = container_slot_width / 2;
+					float item_height = container_slot_height / 2;
+					RenderItem container_slot_item_render_item = (RenderItem) {
+						.texture = *p_sprite,
+						.rect = (SDL_FRect) {
+							.x = ((i % columns) * container_slot_width) + (item_width / 2),
+							.y = ((i / columns) * container_slot_height) + (item_height / 2),
+							.w = item_width,
+							.h = item_height,
+						}
+					};
+					add_render_item(container_slot_item_render_item, p_render_list, p_render_list_count, p_render_list_capacity);
+				}
+			}
+		}
+	}
 }
 
 void sys_light_position_dimension(long* p_time_since_last_tick_ns, SDL_Renderer* p_sdl_renderer, SDL_Texture* lightmap, Lights* lights, Positions* positions, Dimensions* dimensions) {
@@ -557,7 +740,7 @@ void sys_oxygenator_position_dimension_oxygen_container_sound(long* p_time_since
 	}
 }
 
-void spawn_batteries(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Lights* lights, Sprites* sprites, Batteries* batteries, c_dimension* p_spawn_dimensions) {
+void spawn_batteries(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Lights* lights, Sprites* sprites, Batteries* batteries, Containables* containables, c_dimension* p_spawn_dimensions) {
 	for (size_t i = 0; i < spawn_count; i++) {
 		Entity battery_entity = *p_entity_count;
 		add_Positions(positions, battery_entity, (c_position) {
@@ -576,12 +759,13 @@ void spawn_batteries(uint32_t spawn_count, size_t* p_entity_count, Positions* po
 				.green = 200,
 				.blue = 60,
 				});
+		add_Containables(containables, battery_entity, true);
 		add_Sprites(sprites, battery_entity, battery_sprite);
 		*p_entity_count += 1;
 	}
 }
 
-void spawn_outside_lights(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, Lights* lights, Sprites* sprites, c_dimension* p_spawn_dimensions) {
+void spawn_outside_lights(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, Lights* lights, Sprites* sprites, Containers* containers, c_dimension* p_spawn_dimensions) {
 	for(size_t i = 0; i < spawn_count; i++) {
 		Entity light_entity = *p_entity_count;
 		add_Positions(positions, light_entity, (c_position) {
@@ -605,6 +789,8 @@ void spawn_outside_lights(uint32_t spawn_count, size_t* p_entity_count, Position
 				.green = 0,
 				.blue = 60,
 				});
+		add_Containers(containers, light_entity, (c_container) { .containables = {}, .count = 0 });
+		printf("<OUTSIDE LIGHT SPAWNED> %zu\n", *p_entity_count);
 		*p_entity_count += 1;
 	}
 }
@@ -772,7 +958,7 @@ void spawn_characters(uint32_t spawnCount, size_t *p_entity_count, Healths* heal
 void spawn_player(size_t *p_entity_count, Players* players, Healths* healths, Containers* containers, Positions* positions, Dimensions* dimensions, Sprites* sprites, OxygenConsumers* oxygen_consumers, Lights* lights, SDL_FRect *p_rect_spawn_bounds) {
 	c_player player = (c_player) {
 		.displayName = "Player",
-			.type = CTRL_LOCAL,
+		.type = CTRL_LOCAL,
 	};
 	add_Players(players, *p_entity_count, player);
 	add_Lights(lights, *p_entity_count, (c_light) {
@@ -788,8 +974,8 @@ void spawn_player(size_t *p_entity_count, Players* players, Healths* healths, Co
 }
 
 void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Colors* colors, Containables* containables, Sprites* sprites, OxygenContainers* oxygen_containers, SDL_FRect *p_rect_spawn_bounds) {
-	uint32_t width = 20;
-	uint32_t height = 40;
+	uint32_t width = 30;
+	uint32_t height = 50;
 	for(uint32_t i = 0; i < spawn_count; i++) {
 		Entity entity = *p_entity_count;
 		add_Positions(positions, entity, (c_position) {
@@ -805,7 +991,7 @@ void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* pos
 	}
 }
 
-void spawn_house(size_t *p_entity_count, Oxygenators* oxygenators, Positions* positions, Dimensions* dimensions, Colors* colors, Lights* lights, SDL_Rect *p_display_bounds) {
+void spawn_house(size_t *p_entity_count, Oxygenators* oxygenators, Positions* positions, Dimensions* dimensions, Colors* colors, Lights* lights, Containers* containers, SDL_Rect *p_display_bounds) {
 	const uint32_t HOUSE_WIDTH = 300;
 	const uint32_t HOUSE_HEIGHT = 300;
 	add_Oxygenators(oxygenators, *p_entity_count, true);
@@ -830,6 +1016,9 @@ void spawn_house(size_t *p_entity_count, Oxygenators* oxygenators, Positions* po
 			.green = 250,
 			.blue = 200,
 			});
+	add_Containers(containers, *p_entity_count, (c_container) {
+
+	});
 	printf("<HOUSE_SPAWNED> %zu", *p_entity_count);
 	(*p_entity_count)++;
 }
@@ -864,7 +1053,7 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 		SDL_Log("Failed to initialize sound: %s", SDL_GetError());
 	}
 
-	spawn_house(p_entity_count, oxygenators, positions, dimensions, colors, lights, p_display_bounds);
+	spawn_house(p_entity_count, oxygenators, positions, dimensions, colors, lights, containers, p_display_bounds);
 	SDL_FRect character_spawn_bounds;
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
 
@@ -874,12 +1063,12 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 			.height = character_spawn_bounds.h,
 	};
 
-	spawn_characters(10, p_entity_count, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
+	spawn_characters(0, p_entity_count, healths, containers, positions, dimensions, sprites, oxygen_consumers, &character_spawn_bounds);
 	spawn_player(p_entity_count, players, healths, containers, positions, dimensions, sprites, oxygen_consumers, lights, &character_spawn_bounds);
 	spawn_o2_tanks(15, p_entity_count, positions, dimensions, colors, containables, sprites, oxygen_containers, &character_spawn_bounds);
 	spawn_sharks(10, p_entity_count, orbits, colors, positions, dimensions, distance_constraints, damage_colliders, &spawn_dimensions);
-	spawn_outside_lights(5, p_entity_count, positions, dimensions, colors, lights, sprites, &spawn_dimensions);
-	spawn_batteries(3, p_entity_count, positions, dimensions, lights, sprites, batteries, &spawn_dimensions);
+	spawn_outside_lights(10, p_entity_count, positions, dimensions, colors, lights, sprites, containers, &spawn_dimensions);
+	spawn_batteries(3, p_entity_count, positions, dimensions, lights, sprites, batteries, containables, &spawn_dimensions);
 }
 
 void press_button(enum ButtonBit button_bit, ButtonStates* p_button_states) {
@@ -919,6 +1108,18 @@ void controller_feed_sdl(ButtonStates* p_button_states, SDL_Event* p_event) {
 				case SDL_SCANCODE_ESCAPE:
 					press_button(BTN_BACK, p_button_states);
 					break;
+				case SDL_SCANCODE_I:
+					press_button(BTN_INVENTORY, p_button_states);
+					break;
+				case SDL_SCANCODE_E:
+					press_button(BTN_INTERACT, p_button_states);
+					break;
+				case SDL_SCANCODE_T:
+					press_button(BTN_TRANSFER_SELECTION, p_button_states);
+					break;
+				case SDL_SCANCODE_TAB:
+					press_button(BTN_TAB, p_button_states);
+					break;
 				default:
 					break;
 			}
@@ -937,8 +1138,23 @@ void controller_feed_sdl(ButtonStates* p_button_states, SDL_Event* p_event) {
 				case SDL_SCANCODE_W:
 					release_button(BTN_UP, p_button_states);
 					break;
+				case SDL_SCANCODE_Q:
+					release_button(BTN_QUIT, p_button_states);
+					break;
 				case SDL_SCANCODE_ESCAPE:
 					release_button(BTN_BACK, p_button_states);
+					break;
+				case SDL_SCANCODE_I:
+					release_button(BTN_INVENTORY, p_button_states);
+					break;
+				case SDL_SCANCODE_E:
+					release_button(BTN_INTERACT, p_button_states);
+					break;
+				case SDL_SCANCODE_T:
+					release_button(BTN_TRANSFER_SELECTION, p_button_states);
+					break;
+				case SDL_SCANCODE_TAB:
+					release_button(BTN_TAB, p_button_states);
 					break;
 				default:
 					break;
@@ -961,16 +1177,16 @@ void update_player(long *p_time_since_last_tick, size_t *p_entity_count, enum Ga
 
 		p_player->button_states = *button_states;
 
+		Entity player_entity = players->entities[i];
+		c_position* p_position = get_Positions(positions, player_entity);
+		assert(p_position != NULL);
+		c_health* p_health = get_Healths(healths, player_entity);
+		if (p_health != NULL && *p_health > 0) {
+			any_living_players = true;
+		}
+
 		switch (*p_game_state) {
 			case RUNNING: {
-					      Entity player_entity = players->entities[i];
-					      c_position* p_position = get_Positions(positions, player_entity);
-					      assert(p_position != NULL);
-					      c_health* p_health = get_Healths(healths, player_entity);
-					      if (p_health != NULL && *p_health > 0) {
-						      any_living_players = true;
-					      }
-
 					      if(p_player->button_states.held & BTN_LEFT) {
 						      p_position->x -= delta;
 					      }
@@ -990,13 +1206,13 @@ void update_player(long *p_time_since_last_tick, size_t *p_entity_count, enum Ga
 				      }
 			case PAUSED: {
 					     if (p_player->button_states.pressed & BTN_BACK) *p_game_state = RUNNING;
-					     if (p_player->button_states.held & BTN_QUIT) *p_game_state = QUIT;
+					     if (p_player->button_states.pressed & BTN_QUIT) *p_game_state = QUIT;
 					     break;
 				     }
-			default: break;
-				 *p_game_state = any_living_players ? *p_game_state : GAME_OVER;
+			default:
 		}
 	}
+	*p_game_state = any_living_players ? *p_game_state : GAME_OVER;
 }
 
 void sys_orbit_position(long* p_time_since_last_tick_ns, Orbits* orbits, Positions* positions) {
@@ -1062,7 +1278,7 @@ void sys_containables_container_position_dimension_sprite_sound_attachment(Conta
 				if (container_has_space) {
 					p_container->containables[p_container->count] = containable_entity;
 					p_container->count++;
-					remove_Sprites(sprites, containable_entity);
+					printf("%d picked up %d\n", container_entity, containable_entity);
 					remove_Dimensions(dimensions, containable_entity);
 					add_Attachments(attachments, containable_entity, (c_attachment) { parent: container_entity });
 					add_Sounds(sounds, container_entity, (c_sound){ fname: "pick-up.wav", repeat: false });
@@ -1266,6 +1482,16 @@ void cleanup(SDL_Window *p_sdl_window) {
 	SDL_Quit();
 }
 
+void sys_render(SDL_Renderer* p_sdl_renderer, RenderItem* render_list, uint32_t *p_render_list_count) {
+	for (uint32_t i = 0; i < *p_render_list_count; i++) {
+		RenderItem* render_item = &render_list[i];
+
+		SDL_SetTextureScaleMode(render_item->texture, SDL_SCALEMODE_NEAREST);
+		SDL_RenderTexture(p_sdl_renderer, render_item->texture, NULL, &render_item->rect);
+	}
+	*p_render_list_count = 0;
+}
+
 int main() {
 	SDL_Window *p_sdl_window;
 	SDL_Renderer *p_sdl_renderer;
@@ -1289,6 +1515,10 @@ int main() {
 	SDL_Rect displayBounds;
 	SDL_DisplayID primaryDisplayId = SDL_GetPrimaryDisplay();
 	SDL_GetDisplayBounds(primaryDisplayId, &displayBounds);
+	c_dimension display_dimension = (c_dimension) {
+		.width = displayBounds.w,
+		.height = displayBounds.h
+	};
 	if(primaryDisplayId == 0) {
 		printf("failed to get primary display due to the following error:%s\n", SDL_GetError());
 		exit(-1);
@@ -1326,6 +1556,7 @@ int main() {
 	// components_v2
 	Containables containables = {0};
 	Containers containers = {0};
+	ContainerSessions container_sessions = {0};
 	Colors colors = {0};
 	Dimensions dimensions = {0};
 	Healths healths = {0};
@@ -1343,10 +1574,18 @@ int main() {
 	Batteries batteries = {0};
 	Players players = {0};
 
+	uint32_t render_list_capacity = 100;
+	RenderItem* render_list = malloc(sizeof(RenderItem) * render_list_capacity);
+	uint32_t render_list_count = 0;
+
 	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
 	init_bmp("aquanaut.bmp", &aquanaut_sprite, p_sdl_renderer);
 	init_bmp("battery.bmp", &battery_sprite, p_sdl_renderer);
+	init_bmp("container.bmp", &container_sprite, p_sdl_renderer);
+	init_bmp("container_slot_selected.bmp", &container_slot_selected_sprite, p_sdl_renderer);
 	generate_light_sprite(&light_sprite, p_sdl_renderer);
+
+	SDL_RectToFRect(&displayBounds, &container_render_item.rect);
 
 	enum GameState game_state;
 	SDL_Texture* p_lightmap = SDL_CreateTexture(
@@ -1386,6 +1625,8 @@ int main() {
 		sys_position_dimension_sprite(&positions, &dimensions, &sprites, p_sdl_renderer);
 		sys_health_dimension_position(&healths, &positions, &dimensions, p_sdl_renderer);
 		sys_light_position_dimension(&time_since_last_tick, p_sdl_renderer, p_lightmap, &lights, &positions, &dimensions);
+		sys_container_player_position_dimension_sprite(&display_dimension, render_list, &render_list_count, &render_list_capacity, &containers, &players, &positions, &dimensions, &sprites, &container_sessions, &attachments);
+
 
 		SDL_SetTextureBlendMode(p_lightmap, SDL_BLENDMODE_MUL);   // built-in
 		SDL_RenderTexture(p_sdl_renderer, p_lightmap, NULL, NULL);             // full-screen
@@ -1433,7 +1674,7 @@ int main() {
 					     pause_text = TTF_RenderText_Blended(font, "PAUSED (press 'q' to exit)", 0, color);
 					     if (pause_text) {
 						     pause_text_texture = SDL_CreateTextureFromSurface(p_sdl_renderer, pause_text);
-						     SDL_DestroySurface(text);
+						     SDL_DestroySurface(pause_text);
 					     }
 					     if (!pause_text_texture) {
 						     SDL_Log("Couldn't create text: %s\n", SDL_GetError());
@@ -1483,6 +1724,8 @@ int main() {
 					 break;
 				 }
 		}
+
+		sys_render(p_sdl_renderer, render_list, &render_list_count);
 
 		time_since_last_fps_calc += time_since_last_tick;
 		frame_count += 1;
