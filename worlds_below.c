@@ -214,6 +214,7 @@ typedef struct c_container_session {
 	// Resources: Static assets that may be reused across components/systems
 	static c_sprite o2_tank_sprite;
 	static c_sprite aquanaut_sprite;
+	static c_sprite fortress_sprite;
 	static c_sprite light_sprite;
 	static c_sprite battery_sprite;
 	static c_sprite container_sprite;
@@ -1058,7 +1059,7 @@ void spawn_o2_tanks(uint32_t spawn_count, size_t* p_entity_count, Positions* pos
 	}
 }
 
-void spawn_house(size_t *p_entity_count, Oxygenators* oxygenators, Positions* positions, Dimensions* dimensions, Colors* colors, Lights* lights, Containers* containers, EnergyConsumers* energy_consumers, EnergyProducers* energy_producers, SDL_Rect *p_display_bounds) {
+void spawn_house(size_t *p_entity_count, Oxygenators* oxygenators, Positions* positions, Dimensions* dimensions, Lights* lights, Containers* containers, EnergyConsumers* energy_consumers, EnergyProducers* energy_producers, Sprites* sprites, SDL_Rect *p_display_bounds) {
 	const uint32_t HOUSE_WIDTH = 300;
 	const uint32_t HOUSE_HEIGHT = 300;
 	add_Oxygenators(oxygenators, *p_entity_count, true);
@@ -1070,15 +1071,11 @@ void spawn_house(size_t *p_entity_count, Oxygenators* oxygenators, Positions* po
 			.width = HOUSE_WIDTH,
 			.height = HOUSE_HEIGHT,
 			});
-	add_Colors(colors, *p_entity_count, (c_color) {
-			.red = 100,
-			.green = 100,
-			.blue = 100
-			});
+	add_Sprites(sprites, *p_entity_count, fortress_sprite);
 	add_Lights(lights, *p_entity_count, (c_light) {
 			.width = 2400,
 			.height = 2400,
-			.brightness = .6f,
+			.brightness = 1,
 			.red = 250,
 			.green = 250,
 			.blue = 200,
@@ -1128,7 +1125,7 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 		SDL_Log("Failed to initialize sound: %s", SDL_GetError());
 	}
 
-	spawn_house(p_entity_count, oxygenators, positions, dimensions, colors, lights, containers, energy_consumers, energy_producers, p_display_bounds);
+	spawn_house(p_entity_count, oxygenators, positions, dimensions, lights, containers, energy_consumers, energy_producers, sprites, p_display_bounds);
 	SDL_FRect character_spawn_bounds;
 	SDL_RectToFRect(p_display_bounds, &character_spawn_bounds);
 
@@ -1758,6 +1755,7 @@ int main() {
 
 	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
 	init_bmp("aquanaut.bmp", &aquanaut_sprite, p_sdl_renderer);
+	init_bmp("fortress.bmp", &fortress_sprite, p_sdl_renderer);
 	init_bmp("battery.bmp", &battery_sprite, p_sdl_renderer);
 	init_bmp("container.bmp", &container_sprite, p_sdl_renderer);
 	init_bmp("container_slot_selected.bmp", &container_slot_selected_sprite, p_sdl_renderer);
