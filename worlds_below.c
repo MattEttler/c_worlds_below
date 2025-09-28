@@ -62,6 +62,10 @@ enum ButtonBit {
 	BTN_INVENTORY	 	= 1u << 7,
 	BTN_TRANSFER_SELECTION	= 1u << 8,
 	BTN_TAB			= 1u << 9,
+	BTN_LEFT_SECONDARY 	= 1u << 10,
+	BTN_RIGHT_SECONDARY	= 1u << 11,
+	BTN_UP_SECONDARY	= 1u << 12,
+	BTN_DOWN_SECONDARY 	= 1u << 13,
 };
 
 typedef struct RenderItem {
@@ -384,16 +388,16 @@ void sys_container_player_position_dimension_sprite(c_dimension* p_display_bound
 		if(container_is_open) {
 			c_container* p_target_container = get_Containers(containers, p_player_container_session->container);
 
-			if(p_player->button_states.pressed & BTN_RIGHT) {
+			if(p_player->button_states.pressed & BTN_RIGHT_SECONDARY) {
 				p_player_container_session->active_slot_index ++;
 			}
-			if(p_player->button_states.pressed & BTN_LEFT) {
+			if(p_player->button_states.pressed & BTN_LEFT_SECONDARY) {
 				p_player_container_session->active_slot_index --;
 			}
-			if(p_player->button_states.pressed & BTN_UP) {
+			if(p_player->button_states.pressed & BTN_UP_SECONDARY) {
 				p_player_container_session->active_slot_index -= 5;
 			}
-			if(p_player->button_states.pressed & BTN_DOWN) {
+			if(p_player->button_states.pressed & BTN_DOWN_SECONDARY) {
 				p_player_container_session->active_slot_index += 5;
 			}
 			if(p_player->button_states.pressed & BTN_TAB) {
@@ -1120,6 +1124,18 @@ void controller_feed_sdl(ButtonStates* p_button_states, SDL_Event* p_event) {
 				case SDL_SCANCODE_TAB:
 					press_button(BTN_TAB, p_button_states);
 					break;
+				case SDL_SCANCODE_UP:
+					press_button(BTN_UP_SECONDARY, p_button_states);
+					break;
+				case SDL_SCANCODE_DOWN:
+					press_button(BTN_DOWN_SECONDARY, p_button_states);
+					break;
+				case SDL_SCANCODE_LEFT:
+					press_button(BTN_LEFT_SECONDARY, p_button_states);
+					break;
+				case SDL_SCANCODE_RIGHT:
+					press_button(BTN_RIGHT_SECONDARY, p_button_states);
+					break;
 				default:
 					break;
 			}
@@ -1155,6 +1171,18 @@ void controller_feed_sdl(ButtonStates* p_button_states, SDL_Event* p_event) {
 					break;
 				case SDL_SCANCODE_TAB:
 					release_button(BTN_TAB, p_button_states);
+					break;
+				case SDL_SCANCODE_UP:
+					release_button(BTN_UP_SECONDARY, p_button_states);
+					break;
+				case SDL_SCANCODE_DOWN:
+					release_button(BTN_DOWN_SECONDARY, p_button_states);
+					break;
+				case SDL_SCANCODE_LEFT:
+					release_button(BTN_LEFT_SECONDARY, p_button_states);
+					break;
+				case SDL_SCANCODE_RIGHT:
+					release_button(BTN_RIGHT_SECONDARY, p_button_states);
 					break;
 				default:
 					break;
