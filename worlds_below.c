@@ -212,13 +212,14 @@ typedef struct c_container_session {
 	COMPONENT(Sprites, c_sprite)
 	
 	// Resources: Static assets that may be reused across components/systems
-	static c_sprite o2_tank_sprite;
 	static c_sprite aquanaut_sprite;
+	static c_sprite battery_sprite;
+	static c_sprite container_slot_selected_sprite;
+	static c_sprite container_sprite;
+	static c_sprite coral_sprite;
 	static c_sprite fortress_sprite;
 	static c_sprite light_sprite;
-	static c_sprite battery_sprite;
-	static c_sprite container_sprite;
-	static c_sprite container_slot_selected_sprite;
+	static c_sprite o2_tank_sprite;
 
 	// =======================================================================================
 	//  ┌─┐┬ ┬┌─┐┌┬┐┌─┐┌┬┐┌─┐
@@ -798,6 +799,22 @@ void sys_oxygenator_position_dimension_oxygen_container_sound(long* p_time_since
 	}
 }
 
+void spawn_coral(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Sprites* sprites, c_dimension* p_spawn_dimensions) {
+	for (size_t i = 0; i < spawn_count; i++) {
+		Entity coral_entity = *p_entity_count;
+		add_Positions(positions, coral_entity, (c_position) {
+				.x = rand() / (RAND_MAX / (p_spawn_dimensions->width - 10 + 1)),
+				.y = rand() / (RAND_MAX / (p_spawn_dimensions->height - 10 + 1)),
+				});
+		add_Dimensions(dimensions, coral_entity, (c_dimension) {
+				.width = 50,
+				.height = 50,
+				});
+		add_Sprites(sprites, coral_entity, coral_sprite);
+		*p_entity_count += 1;
+	}
+}
+
 void spawn_batteries(uint32_t spawn_count, size_t* p_entity_count, Positions* positions, Dimensions* dimensions, Lights* lights, Sprites* sprites, Batteries* batteries, Containables* containables, c_dimension* p_spawn_dimensions) {
 	for (size_t i = 0; i < spawn_count; i++) {
 		Entity battery_entity = *p_entity_count;
@@ -1141,6 +1158,7 @@ void init(enum GameState* p_game_state, SDL_Rect *p_display_bounds, size_t *p_en
 	spawn_sharks(20, p_entity_count, orbits, colors, positions, dimensions, distance_constraints, damage_colliders, &spawn_dimensions);
 	spawn_outside_lights(3, p_entity_count, positions, dimensions, colors, lights, sprites, containers, energy_consumers, &spawn_dimensions);
 	spawn_batteries(10, p_entity_count, positions, dimensions, lights, sprites, batteries, containables, &spawn_dimensions);
+	spawn_coral(10, p_entity_count, positions, dimensions, sprites, &spawn_dimensions);
 }
 
 void press_button(enum ButtonBit button_bit, ButtonStates* p_button_states) {
@@ -1753,12 +1771,13 @@ int main() {
 	RenderItem* render_list = malloc(sizeof(RenderItem) * render_list_capacity);
 	uint32_t render_list_count = 0;
 
-	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
 	init_bmp("aquanaut.bmp", &aquanaut_sprite, p_sdl_renderer);
-	init_bmp("fortress.bmp", &fortress_sprite, p_sdl_renderer);
 	init_bmp("battery.bmp", &battery_sprite, p_sdl_renderer);
 	init_bmp("container.bmp", &container_sprite, p_sdl_renderer);
 	init_bmp("container_slot_selected.bmp", &container_slot_selected_sprite, p_sdl_renderer);
+	init_bmp("coral.bmp", &coral_sprite, p_sdl_renderer);
+	init_bmp("fortress.bmp", &fortress_sprite, p_sdl_renderer);
+	init_bmp("o2-tank.bmp", &o2_tank_sprite, p_sdl_renderer);
 	generate_light_sprite(&light_sprite, p_sdl_renderer);
 
 	SDL_RectToFRect(&displayBounds, &container_render_item.rect);
