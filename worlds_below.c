@@ -1365,13 +1365,14 @@ void sys_health_oxygen_consumer_oxygen_container_container(long* p_time_since_la
 		Entity oxygen_consumer_entity = oxygen_consumers->entities[i];
 		c_container* p_container = get_Containers(containers, oxygen_consumer_entity);
 		c_health* p_health = get_Healths(healths, oxygen_consumer_entity);
+		if (p_health == NULL) continue;
 
 		bool has_o2 = false;
 		for (Entity j = 0; j < p_container->count; j++) {
 			Entity contained_entity = p_container->containables[j];
 			c_oxygen_container* p_oxygen_container = get_OxygenContainers(oxygen_containers, contained_entity);
 
-			if (p_health == NULL || p_oxygen_container == NULL ) break;
+			if (p_oxygen_container == NULL ) continue;
 
 			if (p_oxygen_container->volume_m3 > 0) {
 				has_o2 = true;
